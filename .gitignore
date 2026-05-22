@@ -1,0 +1,29 @@
+# PowerShell / local environment
+*.ps1xml
+*.pssc
+*.psrc
+
+# VSCode
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Logs
+*.log
+
+# Local scratch files
+temp_*.sql
+*.scratch.sql
+
+# Optional: generated formatter outputs
+# Keep this commented for now because your tests_out folder is currently useful.
+# tests_out/

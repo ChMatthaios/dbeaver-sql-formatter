@@ -1,0 +1,18 @@
+﻿CREATE OR REPLACE FUNCTION FN_CUSTOMER_SEGMENT
+(
+    P_CUSTOMER_ID INTEGER
+)
+RETURNS VARCHAR(20)
+LANGUAGE SQL
+BEGIN
+    RETURN ( SELECT CASE
+                     WHEN SUM (O.ORDER_TOTAL) >= 10000 THEN 'VIP'
+                     WHEN SUM (O.ORDER_TOTAL) >= 5000 THEN 'GOLD'
+                     WHEN SUM (O.ORDER_TOTAL) >= 1000 THEN 'SILVER'
+                     ELSE 'STANDARD'
+                   END AS SEGMENT_CODE
+               FROM ORDER_HEADER O
+              WHERE O.CUSTOMER_ID = P_CUSTOMER_ID
+                AND O.ORDER_STATUS = 'PAID'
+              WITH UR );
+END;
