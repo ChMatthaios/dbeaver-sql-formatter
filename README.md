@@ -317,6 +317,20 @@ Planned improvement areas:
 4. Add configurable formatting options.
 5. Build a standalone UI/UX app that uses the same formatter core.
 
-## License
+## License / Usage
 
-No license has been selected yet.
+This project is publicly visible for personal use and evaluation.
+
+You may:
+- clone the repository for personal use,
+- run the formatter locally,
+- use it with DBeaver or other local tools.
+
+You may not:
+- redistribute this project,
+- publish modified versions,
+- package or sell it,
+- claim it as your own,
+- use the code in another public or commercial project without permission.
+
+All rights reserved unless explicit written permission is granted by the author.
