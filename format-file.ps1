@@ -80,8 +80,42 @@ if ((Get-Item $ResolvedInputFile).PSIsContainer) {
     throw "Input path is a directory, not a file: $ResolvedInputFile"
 }
 
-$formattedSql = Get-Content $ResolvedInputFile -Raw |
-    powershell -NoProfile -ExecutionPolicy Bypass -File $Formatter
+function Invoke-SqlFormatter {
+    param(
+        [string]$Sql
+    )
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = "powershell"
+    $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$Formatter`""
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $psi
+
+    [void]$process.Start()
+
+    $process.StandardInput.Write($Sql)
+    $process.StandardInput.Close()
+
+    $output = $process.StandardOutput.ReadToEnd()
+    $errorOutput = $process.StandardError.ReadToEnd()
+
+    $process.WaitForExit()
+
+    if ($process.ExitCode -ne 0) {
+        throw "Formatter failed with exit code $($process.ExitCode): $errorOutput"
+    }
+
+    return $output
+}
+
+$inputSql = Get-Content $ResolvedInputFile -Raw
+$formattedSql = Invoke-SqlFormatter -Sql $inputSql
 
 if ($InPlace) {
     Set-Content -Path $ResolvedInputFile -Value $formattedSql -Encoding UTF8 -NoNewline
