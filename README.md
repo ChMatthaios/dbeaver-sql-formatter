@@ -103,6 +103,12 @@ or:
 .\format.ps1 -file 04_complicated_multiline_statements.sql
 ```
 
+Shows the available commands:
+
+```powershell
+.\format.ps1 -help
+```
+
 ## Optional PowerShell command: `sqlfmt`
 
 For convenience, you can install a local PowerShell command named `sqlfmt`.

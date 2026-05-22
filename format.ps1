@@ -22,6 +22,7 @@ param(
     [switch]$runall,
     [switch]$check,
     [switch]$list,
+    [switch]$help,
     [string]$file
 )
 
@@ -29,6 +30,36 @@ $RootDir = $PSScriptRoot
 $Formatter = Join-Path $RootDir "format-sql.ps1"
 $TestDir = Join-Path $RootDir "tests"
 $OutDir = Join-Path $RootDir "tests_out"
+
+function Show-Help {
+    Write-Host ""
+    Write-Host "DBeaver SQL Formatter - Test Runner"
+    Write-Host ""
+    Write-Host "Usage:"
+    Write-Host "  .\format.ps1 -list"
+    Write-Host "  .\format.ps1 -check"
+    Write-Host "  .\format.ps1 -runall"
+    Write-Host "  .\format.ps1 -file 01"
+    Write-Host "  .\format.ps1 -file 04_complicated_multiline_statements.sql"
+    Write-Host ""
+    Write-Host "Optional sqlfmt command:"
+    Write-Host "  sqlfmt --list"
+    Write-Host "  sqlfmt --check"
+    Write-Host "  sqlfmt --runall"
+    Write-Host "  sqlfmt --file 01"
+    Write-Host ""
+    Write-Host "Modes:"
+    Write-Host "  -list    Lists available SQL test input files."
+    Write-Host "  -check   Formats tests into a temp folder and compares them with tests_out."
+    Write-Host "  -runall  Regenerates outputs in tests_out."
+    Write-Host "  -file    Formats one matching test file."
+    Write-Host "  -help    Shows this help message."
+    Write-Host ""
+    Write-Host "Note:"
+    Write-Host "  DBeaver should call format-sql.ps1 directly."
+    Write-Host "  This runner is for local testing and development."
+    Write-Host ""
+}
 
 function Get-TestFiles {
     Get-ChildItem $TestDir -Filter "*.sql" |
@@ -104,6 +135,11 @@ function Test-FormatterOutput {
     exit 0
 }
 
+if ($help) {
+    Show-Help
+    exit 0
+}
+
 if ($list) {
     Get-TestFiles | Select-Object -ExpandProperty Name
     exit 0
@@ -149,9 +185,5 @@ if ($file) {
     exit 0
 }
 
-Write-Host "Usage:"
-Write-Host "  format --runall"
-Write-Host "  format --check"
-Write-Host "  format --file 01"
-Write-Host "  format --file 04_complicated_multiline_statements.sql"
-Write-Host "  format --list"
+Show-Help
+exit 1
