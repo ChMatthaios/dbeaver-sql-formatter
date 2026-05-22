@@ -23,6 +23,7 @@ dbeaver-sql-formatter/
 ├─ README.md
 ├─ format-sql.ps1
 ├─ format.ps1
+├─ format-file.ps1
 ├─ scripts/
 │  └─ install-sqlfmt-command.ps1
 ├─ tests/
@@ -108,6 +109,35 @@ Shows the available commands:
 ```powershell
 .\format.ps1 -help
 ```
+
+## Formatting a SQL file
+
+Use `format-file.ps1` when you want to format a file directly.
+
+Write formatted SQL to the terminal:
+
+```powershell
+.\format-file.ps1 .\input.sql
+```
+
+Write formatted SQL to another file:
+
+```powershell
+.\format-file.ps1 .\input.sql -OutFile .\output.sql
+```
+
+Replace the input file with formatted SQL:
+
+```powershell
+.\format-file.ps1 .\input.sql -InPlace
+```
+
+Show help:
+
+```powershell
+.\format-file.ps1 -help
+```
+
 
 ## Optional PowerShell command: `sqlfmt`
 
