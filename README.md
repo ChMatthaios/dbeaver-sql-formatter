@@ -1,136 +1,263 @@
 # DBeaver SQL Formatter
 
-A lightweight PowerShell-based SQL formatter designed to work as an external formatter for DBeaver.
+A PowerShell-based SQL formatter designed to work well with DBeaver's external formatter flow, while also being usable directly from the command line.
 
-The project currently focuses on formatting SQL scripts from standard input and writing the formatted result to standard output, which makes it suitable for editor integrations and command-line usage.
+The formatter reads SQL from standard input and writes formatted SQL to standard output. This makes it easy to integrate with tools that support external commands.
 
 ## Current status
 
 This project is working, but still evolving.
 
-It is currently a script-based formatter, not yet a standalone desktop application. Future improvements may include a dedicated UI so the formatter can also be used as a separate app outside DBeaver.
+The current goals are:
 
-## Features
-
-- Reads SQL from standard input.
-- Writes formatted SQL to standard output.
-- Supports multiple SQL statement types, including:
-  - `SELECT`
-  - `WITH`
-  - `INSERT`
-  - `UPDATE`
-  - `MERGE`
-  - `CREATE PROCEDURE`
-  - `CREATE FUNCTION`
-- Preserves protected SQL content such as strings and comments during formatting.
-- Includes test SQL files and generated output examples.
-
-## Requirements
-
-- Windows, Linux, or macOS with PowerShell installed.
-- PowerShell 5.1+ or PowerShell 7+.
-
-On Windows, PowerShell is usually already available.
+1. Keep the existing DBeaver workflow stable.
+2. Improve formatter behavior safely and gradually.
+3. Add real regression checks before making larger changes.
+4. Later, add a standalone UI/UX app that uses the same formatter core.
 
 ## Project structure
 
 ```text
 dbeaver-sql-formatter/
-├─ format-sql.ps1   # Main SQL formatter script
-├─ format.ps1       # Test/helper runner
-├─ tests/           # SQL input examples
-├─ tests_out/       # Generated formatter output files
-└─ .gitignore
+├─ .gitignore
+├─ README.md
+├─ format-sql.ps1
+├─ format.ps1
+├─ scripts/
+│  └─ install-sqlfmt-command.ps1
+├─ tests/
+└─ tests_out/
 ```
 
-## Usage from the command line
+## Main files
 
-Format a SQL file and write the result to another file:
+### `format-sql.ps1`
+
+The actual SQL formatter.
+
+It reads SQL from stdin:
 
 ```powershell
-Get-Content .\tests\01_simple_one_line_statements.sql -Raw | .\format-sql.ps1 > .\formatted.sql
+$inputSql = [Console]::In.ReadToEnd()
 ```
 
-Or manually pipe SQL text into the formatter:
+and writes formatted SQL to stdout:
 
 ```powershell
-"select * from customer where customer_id = 1;" | .\format-sql.ps1
+[Console]::Out.Write($result)
 ```
 
-## Test/helper runner
+This stdin/stdout behavior is important because it allows the formatter to work with DBeaver and other external tools.
 
-List available test files:
+### `format.ps1`
+
+The local test/helper runner.
+
+Use it to list test files, regenerate outputs, check outputs, or format a single test case.
+
+### `scripts/install-sqlfmt-command.ps1`
+
+Optional installer that adds a convenient PowerShell command named `sqlfmt`.
+
+It does not hardcode personal paths. It detects the project root automatically and stores it in the user environment variable:
+
+```text
+DBEAVER_SQL_FORMATTER_HOME
+```
+
+## Requirements
+
+- Windows PowerShell
+- Git, if you want to clone or contribute
+- DBeaver, if you want to use it as a DBeaver external formatter
+
+## Basic usage
+
+From the project root:
 
 ```powershell
 .\format.ps1 -list
 ```
 
-Run the formatter against all test files:
+Formats all SQL test inputs and writes outputs to `tests_out`:
 
 ```powershell
 .\format.ps1 -runall
 ```
 
-This writes formatted output files into:
+Checks formatter output against the committed expected outputs in `tests_out`:
+
+```powershell
+.\format.ps1 -check
+```
+
+Formats one matching test file:
+
+```powershell
+.\format.ps1 -file 01
+```
+
+or:
+
+```powershell
+.\format.ps1 -file 04_complicated_multiline_statements.sql
+```
+
+## Optional PowerShell command: `sqlfmt`
+
+For convenience, you can install a local PowerShell command named `sqlfmt`.
+
+From the project root, run:
+
+```powershell
+.\scripts\install-sqlfmt-command.ps1
+```
+
+If PowerShell blocks script execution, run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-sqlfmt-command.ps1
+```
+
+Then close and reopen PowerShell.
+
+You can now use:
+
+```powershell
+sqlfmt --list
+sqlfmt --check
+sqlfmt --runall
+sqlfmt --file 01
+```
+
+The installer adds a small `sqlfmt` wrapper function to the current user's PowerShell profile.
+
+It avoids personal or machine-specific paths by using:
+
+```text
+DBEAVER_SQL_FORMATTER_HOME
+```
+
+Do not use a generic command name like `format` for public documentation. `format` may conflict with existing Windows commands or local user functions. `sqlfmt` is safer and clearer.
+
+## Test runner behavior
+
+### `-runall`
+
+```powershell
+.\format.ps1 -runall
+```
+
+Regenerates output files in:
 
 ```text
 tests_out/
 ```
 
-Important: the current runner formats all test inputs, but it does not yet compare actual output against expected/golden output. So `-runall` means the formatter completed successfully, not necessarily that every formatting result is semantically or stylistically correct.
+This is useful when you intentionally change formatter behavior.
+
+### `-check`
+
+```powershell
+.\format.ps1 -check
+```
+
+Formats test inputs into a temporary folder and compares them against the committed files in:
+
+```text
+tests_out/
+```
+
+This does not overwrite expected outputs.
+
+Use this before committing changes.
+
+A successful check looks like:
+
+```text
+PASS 01_simple_one_line_statements.sql
+PASS 02_simple_multiline_statements.sql
+...
+Check complete. Passed: X. Failed: 0.
+```
+
+## Recommended development workflow
+
+Before editing:
+
+```powershell
+git status
+```
+
+After editing:
+
+```powershell
+.\format.ps1 -check
+```
+
+Review changes:
+
+```powershell
+git diff
+```
+
+Commit:
+
+```powershell
+git add .
+git commit -m "Describe the change"
+git push
+```
+
+Every meaningful project change should be reflected in this README when it affects usage, setup, workflow, or project direction.
 
 ## DBeaver usage
 
-This formatter is intended to be usable from DBeaver as an external SQL formatter.
+This formatter is designed to work with DBeaver as an external SQL formatter.
 
-The formatter script reads SQL from standard input and writes the formatted SQL to standard output:
+The important behavior is:
+
+- SQL input comes from stdin.
+- Formatted SQL output goes to stdout.
+- No UI interaction is required for the DBeaver workflow.
+
+Detailed DBeaver setup instructions will be added as the project evolves.
+
+## Public repository hygiene
+
+Before pushing public changes, avoid committing:
+
+- personal Windows paths,
+- usernames,
+- passwords,
+- API keys,
+- tokens,
+- real database connection strings,
+- private company SQL,
+- local scratch files.
+
+Useful scan commands:
 
 ```powershell
-.\format-sql.ps1
+Get-ChildItem -Recurse -File | Select-String -Pattern "C:\\Users\\"
 ```
 
-Exact DBeaver configuration steps may vary depending on your DBeaver version and environment.
+```powershell
+Get-ChildItem -Recurse -File | Select-String -Pattern "password|passwd|pwd|secret|apikey|api_key|connectionstring|connection string|server=|user id=|uid=|trusted_connection"
+```
+
+Email-like test data such as `'A@B.COM'` is fine when it is fake sample data.
 
 ## Roadmap
 
-Planned improvements:
+Planned improvement areas:
 
-- Improve formatting consistency and edge-case handling.
-- Add true regression tests by comparing generated output against expected output.
-- Improve command-line documentation.
-- Prepare better DBeaver setup instructions.
-- Add a standalone UI/UX layer so the formatter can be used as a separate app.
-- Consider packaging options for easier installation.
-
-## Development notes
-
-Before making changes, run:
-
-```powershell
-.\format.ps1 -runall
-```
-
-After making changes, run it again and inspect the generated files in `tests_out/`.
-
-Future versions should introduce golden-output comparison so formatting changes can be reviewed more safely.
-
-## Security / privacy note
-
-This repository should not contain personal local paths, credentials, database connection strings, tokens, or private SQL data.
-
-Before publishing, scan the project for sensitive values such as:
-
-- local machine paths
-- usernames
-- passwords
-- API keys
-- access tokens
-- database server names
-- connection strings
-- private customer or company data
+1. Keep improving formatter correctness and consistency.
+2. Add stronger regression checks.
+3. Improve documentation for DBeaver integration.
+4. Add configurable formatting options.
+5. Build a standalone UI/UX app that uses the same formatter core.
 
 ## License
 
 No license has been selected yet.
-
-Until a license is added, all rights are reserved by the repository owner.
