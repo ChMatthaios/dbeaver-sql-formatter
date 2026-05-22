@@ -150,8 +150,8 @@ if ($file) {
 }
 
 Write-Host "Usage:"
-Write-Host "  .\format.ps1 -runall"
-Write-Host "  .\format.ps1 -check"
-Write-Host "  .\format.ps1 -file 01"
-Write-Host "  .\format.ps1 -file 04_complicated_multiline_statements.sql"
-Write-Host "  .\format.ps1 -list"
+Write-Host "  format --runall"
+Write-Host "  format --check"
+Write-Host "  format --file 01"
+Write-Host "  format --file 04_complicated_multiline_statements.sql"
+Write-Host "  format --list"
