@@ -140,6 +140,71 @@ DBEAVER_SQL_FORMATTER_HOME
 
 Do not use a generic command name like `format` for public documentation. `format` may conflict with existing Windows commands or local user functions. `sqlfmt` is safer and clearer.
 
+## DBeaver usage
+
+This formatter is designed to work with DBeaver as an external SQL formatter.
+
+Current known setup:
+
+```text
+Preferences → Editors → SQL Editor → SQL Formatting
+```
+
+The formatter is triggered from DBeaver with:
+
+```text
+Ctrl + Shift + F
+```
+
+DBeaver formats either:
+
+- the selected SQL text, or
+- the query where the cursor currently is.
+
+No extra DBeaver-specific settings are currently required.
+
+### Recommended DBeaver command
+
+Use PowerShell directly and point it to `format-sql.ps1`.
+
+Example command shape:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "FULL_PATH_TO_REPOSITORY\format-sql.ps1"
+```
+
+Replace `FULL_PATH_TO_REPOSITORY` with the folder where this project is cloned.
+
+Example:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Path\To\dbeaver-sql-formatter\format-sql.ps1"
+```
+
+Do not commit personal local paths to this repository.
+
+### Why DBeaver should call `format-sql.ps1`
+
+For DBeaver integration, the formatter script should behave like a stdin/stdout command:
+
+```text
+SQL input  → stdin  → format-sql.ps1 → stdout → formatted SQL output
+```
+
+That is why DBeaver should call:
+
+```text
+format-sql.ps1
+```
+
+not the test runner:
+
+```text
+format.ps1
+```
+
+`format.ps1` is for local testing and development.
+
 ## Test runner behavior
 
 ### `-runall`
@@ -210,18 +275,6 @@ git push
 ```
 
 Every meaningful project change should be reflected in this README when it affects usage, setup, workflow, or project direction.
-
-## DBeaver usage
-
-This formatter is designed to work with DBeaver as an external SQL formatter.
-
-The important behavior is:
-
-- SQL input comes from stdin.
-- Formatted SQL output goes to stdout.
-- No UI interaction is required for the DBeaver workflow.
-
-Detailed DBeaver setup instructions will be added as the project evolves.
 
 ## Public repository hygiene
 
