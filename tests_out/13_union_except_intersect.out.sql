@@ -9,7 +9,7 @@ SELECT CUSTOMER_ID,
  WHERE IS_ACTIVE = 1
  ORDER BY CUSTOMER_ID ASC
  FETCH FIRST 100 ROWS ONLY
-  WITH UR;
+  WITH UR;;
 
 SELECT CUSTOMER_ID,
        EMAIL_ADDRESS
@@ -27,18 +27,22 @@ SELECT CUSTOMER_ID,
  WHERE IS_ACTIVE = 1
  ORDER BY CUSTOMER_ID ASC, EMAIL_ADDRESS ASC
  FETCH FIRST 250 ROWS ONLY
-  WITH UR;
+  WITH UR;;
 
-WITH ACTIVE_CUSTOMERS AS ( SELECT CUSTOMER_ID,
-                                  CUSTOMER_NAME,
-                                  EMAIL_ADDRESS
-                             FROM CUSTOMER
-                            WHERE IS_ACTIVE = 1 ),
-     STAGED_CUSTOMERS AS ( SELECT CUSTOMER_ID,
-                                  CUSTOMER_NAME,
-                                  EMAIL_ADDRESS
-                             FROM CUSTOMER_STAGE
-                            WHERE BATCH_ID = 20260520 )
+WITH ACTIVE_CUSTOMERS
+  AS ( SELECT CUSTOMER_ID,
+            CUSTOMER_NAME,
+            EMAIL_ADDRESS
+       FROM CUSTOMER
+      WHERE IS_ACTIVE = 1
+     ),
+   , STAGED_CUSTOMERS
+  AS ( SELECT CUSTOMER_ID,
+            CUSTOMER_NAME,
+            EMAIL_ADDRESS
+       FROM CUSTOMER_STAGE
+      WHERE BATCH_ID = 20260520
+     )
 SELECT CUSTOMER_ID,
        CUSTOMER_NAME,
        EMAIL_ADDRESS

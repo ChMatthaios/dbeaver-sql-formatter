@@ -1,340 +1,154 @@
 <#
-    DBeaver External SQL Beautifier
-    Unified SELECT Architecture
+    DB2 SQL Formatter - recursive rewrite v2
     ------------------------------------------------------------
+    Reads SQL from stdin and writes formatted SQL to stdout.
 
-    Core idea:
-      A SELECT is always formatted by the same formatter.
-
-      Normal SELECT:
-        Format-SelectStatement -Sql $sql -OpeningPrefix ""
-
-      CTE SELECT:
-        Format-SelectStatement -Sql $innerSql -OpeningPrefix "WITH NAME AS ( "
-
-      MERGE source SELECT:
-        Format-SelectStatement -Sql $sourceSql -OpeningPrefix " USING ( "
-
-    This avoids the previous problem where normal SELECTs, CTE SELECTs,
-    and MERGE source SELECTs were formatted by different logic.
-
-    Rules:
-      - No downloads
-      - PowerShell 5.1 compatible
-      - 120-character target line length where safe
-      - Spaces only
-      - CRLF output
-      - SQL keywords/functions uppercase
-      - SELECT / FROM / WHERE / GROUP BY / ORDER BY / LIMIT / WITH UR
-        keep the same alignment style everywhere
+    This formatter is heuristic, not a full DB2 parser.
+    It is designed around one central idea:
+      - Format SELECT consistently.
+      - Reuse SELECT formatting inside CTEs, subqueries, MERGE, CREATE VIEW, cursors, procedures, and functions.
 #>
 
 $ErrorActionPreference = "Stop"
-
-$script:MaxLineLength = 80
-$script:NewLine = "`r`n"
-
-# ======================================================================
-# Protection layer
-# ======================================================================
-# We protect strings and comments before normalizing whitespace or
-# uppercasing keywords. This prevents the formatter from changing text
-# inside string literals or comments.
-# ======================================================================
 
 $script:ProtectedMap = @{}
 $script:ProtectedIndex = 0
 
 function New-ProtectedToken {
-    param(
-        [string]$Prefix,
-        [string]$Value
-    )
+    param([string]$Prefix, [string]$Value)
 
+    $script:ProtectedIndex++
     $token = "__SQLFMT_${Prefix}_$script:ProtectedIndex`__"
     $script:ProtectedMap[$token] = $Value
-    $script:ProtectedIndex++
-
     return $token
 }
 
-function Protect-SqlText {
-    param([string]$Text)
+function Protect-SqlLiteralsAndComments {
+    param([string]$Sql)
 
-    # ------------------------------------------------------------------
-    # Comment/string protection strategy
-    # ------------------------------------------------------------------
-    # The formatter normalizes whitespace before rebuilding SQL. If raw
-    # comments are left in the SQL during that step, line comments can swallow
-    # the next tokens and block comments can be split incorrectly.
-    #
-    # So comments and strings are replaced with neutral tokens first, then the
-    # real text is restored at the end.
-    #
-    # Important style rule:
-    #   Comments are not "formatted" separately. They behave like text items
-    #   that stay where they were:
-    #
-    #     SELECT A,
-    #            -- comment
-    #            B,
-    #            C -- inline comment
-    #
-    # Standalone comments receive an internal EOL marker only so the formatter
-    # remembers that the next SQL token originally started on the next line.
-    # ------------------------------------------------------------------
+    $script:ProtectedMap = @{}
+    $script:ProtectedIndex = 0
 
-    # Standalone block comments:
-    #
-    #   /*
-    #    ...
-    #   */
-    #
-    # If the block comment occupies its own physical line/block, keep it as a
-    # standalone item by appending __SQLFMT_EOL__. This allows later formatting
-    # to place it on its own line without inventing blank lines.
-    $Text = [regex]::Replace(
-        $Text,
-        '(?ms)(^|\n)[ \t]*(/\*.*?\*/)[ \t]*(?=\n|$)',
-        {
-            param($m)
-            $m.Groups[1].Value +
-            (New-ProtectedToken -Prefix "BCOM" -Value $m.Groups[2].Value) +
-            ' __SQLFMT_EOL__ '
-        }
-    )
+    $Sql = [regex]::Replace($Sql, '/\*[\s\S]*?\*/', { param($m) New-ProtectedToken -Prefix "BCOM" -Value $m.Value })
+    $Sql = [regex]::Replace($Sql, "'(?:''|[^'])*'", { param($m) New-ProtectedToken -Prefix "STR" -Value $m.Value })
+    $Sql = [regex]::Replace($Sql, '"(?:""|[^"])*"', { param($m) New-ProtectedToken -Prefix "DQS" -Value $m.Value })
+    $Sql = [regex]::Replace($Sql, '--[^\r\n]*', { param($m) New-ProtectedToken -Prefix "LCOM" -Value $m.Value })
 
-    # Remaining block comments are inline block comments. They stay exactly
-    # where they are in the expression/statement that contains them.
-    $Text = [regex]::Replace(
-        $Text,
-        '/\*[\s\S]*?\*/',
-        { param($m) New-ProtectedToken -Prefix "BCOM" -Value $m.Value }
-    )
-
-    # Protect SQL string literals, including escaped single quotes.
-    $Text = [regex]::Replace(
-        $Text,
-        "'(?:''|[^'])*'",
-        { param($m) New-ProtectedToken -Prefix "STR" -Value $m.Value }
-    )
-
-    # Standalone line comments:
-    #
-    #   -- comment
-    #
-    # behave like standalone SELECT-list/procedure items. The EOL marker only
-    # preserves the original "next token starts on next line" boundary.
-    $Text = [regex]::Replace(
-        $Text,
-        '(?m)^[ \t]*(--.*)$',
-        {
-            param($m)
-            (New-ProtectedToken -Prefix "SLCOM" -Value $m.Groups[1].Value) +
-            ' __SQLFMT_EOL__ '
-        }
-    )
-
-    # Inline line comments:
-    #
-    #   COL, -- comment
-    #
-    # remain attached to the previous item. The EOL marker lets the next SQL
-    # token continue as the next item/line instead of being consumed by the
-    # comment.
-    $Text = [regex]::Replace(
-        $Text,
-        '(?m)--.*$',
-        {
-            param($m)
-            (New-ProtectedToken -Prefix "LCOM" -Value $m.Value) +
-            ' __SQLFMT_EOL__ '
-        }
-    )
-
-    return $Text
+    return $Sql
 }
 
-function Restore-SqlText {
-    param([string]$Text)
+function Restore-ProtectedTokens {
+    param([string]$Sql)
 
     foreach ($key in ($script:ProtectedMap.Keys | Sort-Object Length -Descending)) {
-        $Text = $Text.Replace($key, $script:ProtectedMap[$key])
+        $Sql = $Sql.Replace($key, $script:ProtectedMap[$key])
     }
 
-    return $Text
+    return $Sql
 }
 
-# ======================================================================
-# Normalization and keyword casing
-# ======================================================================
-
-function Normalize-SqlWhitespace {
+function Normalize-Space {
     param([string]$Text)
 
-    $Text = $Text -replace "`r`n", "`n"
-    $Text = $Text -replace "`r", "`n"
+    if ($null -eq $Text) { return "" }
 
-    # Create a predictable single-line representation.
-    $Text = [regex]::Replace($Text, '[ \t\r\n]+', ' ')
-    $Text = [regex]::Replace($Text, '\s*,\s*', ', ')
-    $Text = [regex]::Replace($Text, '\s*\(\s*', ' (')
-    $Text = [regex]::Replace($Text, '\s*\)\s*', ') ')
-    $Text = [regex]::Replace($Text, '\s+', ' ')
-
-    # Preferred function style from the guide.
-    $Text = [regex]::Replace($Text, '\b(SUM|COUNT|MIN|MAX|AVG|COALESCE|ROW_NUMBER)\s*\(', '$1 (', 'IgnoreCase')
-    $Text = [regex]::Replace($Text, '\bOVER\s*\(', 'OVER (', 'IgnoreCase')
-    $Text = [regex]::Replace($Text, '\bTOP\s+\(\s*(\d+)\s*\)', 'TOP ($1)', 'IgnoreCase')
-
+    $Text = $Text -replace '[\r\n\t]+', ' '
+    $Text = $Text -replace '\s+', ' '
+    $Text = $Text -replace '\s+,', ','
+    $Text = $Text -replace ',\s*', ', '
+    $Text = $Text -replace '\s+\)', ')'
+    $Text = $Text -replace '\(\s+', '('
+    $Text = $Text -replace '\s+;', ';'
     return $Text.Trim()
 }
 
 function Convert-SqlKeywordsToUpper {
-    param([string]$Text)
+    param([string]$Sql)
 
     $keywords = @(
-        'select', 'distinct', 'top', 'from', 'where', 'and', 'or', 'not', 'in', 'exists',
-        'inner', 'left', 'right', 'full', 'outer', 'join', 'on',
-        'group', 'by', 'having', 'order', 'asc', 'desc',
-        'limit', 'fetch', 'first', 'rows', 'only',
-        'with', 'ur', 'nc',
-        'insert', 'into', 'values',
-        'update', 'set',
-        'delete',
-        'merge', 'using', 'matched', 'when', 'then',
-        'case', 'else', 'end', 'as',
-        'is', 'null',
-        'current', 'timestamp', 'user',
-        'row_number', 'over', 'partition',
-        'sum', 'count', 'min', 'max', 'avg', 'coalesce',
-        'union','all','except','intersect'
+        'select','from','where','and','or','not','null','is','in','exists','between','like',
+        'inner','left','right','full','cross','outer','join','on','group','by','having','order',
+        'asc','desc','fetch','first','rows','only','limit','offset','with','ur','rs','cs','rr','nc',
+        'union','all','except','intersect','case','when','then','else','end','as','over','partition',
+        'insert','into','values','update','set','delete','merge','using','matched','then',
+        'create','replace','procedure','function','returns','language','sql','begin','atomic',
+        'declare','cursor','for','continue','handler','open','fetch','close','loop','leave','if',
+        'signal','sqlstate','message_text','prepare','execute','table','view','index','schema',
+        'constraint','primary','key','foreign','references','check','default','temporary','global',
+        'session','commit','preserve','logged','alter','add','column','data','type','optimize',
+        'deterministic','external','action'
     )
 
     foreach ($kw in $keywords) {
-        $Text = [regex]::Replace(
-            $Text,
-            '\b' + [regex]::Escape($kw) + '\b',
-            { param($m) $m.Value.ToUpperInvariant() },
-            [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+        $escaped = [regex]::Escape($kw)
+        $Sql = [regex]::Replace(
+            $Sql,
+            "(?i)(?<![A-Z0-9_])$escaped(?![A-Z0-9_])",
+            { param($m) $m.Value.ToUpperInvariant() }
         )
     }
 
-    return $Text
+    return $Sql
 }
 
-# ======================================================================
-# Scanner helpers
-# ======================================================================
-# These helpers split SQL only at top-level separators. They avoid commas,
-# AND, OR, and keywords inside parentheses and CASE blocks.
-# ======================================================================
+function Get-ParenDepthAt {
+    param([string]$Text, [int]$Index)
 
-function Split-TopLevelComma {
-    param([string]$Text)
-
-    $items = New-Object System.Collections.Generic.List[string]
-
-    $start = 0
     $depth = 0
-    $caseDepth = 0
-    $i = 0
-
-    while ($i -lt $Text.Length) {
-        $remaining = $Text.Substring($i)
-
-        if ([regex]::IsMatch($remaining, '^\bCASE\b', 'IgnoreCase')) {
-            $caseDepth++
-            $i += 4
-            continue
-        }
-
-        if ([regex]::IsMatch($remaining, '^\bEND\b', 'IgnoreCase')) {
-            if ($caseDepth -gt 0) { $caseDepth-- }
-            $i += 3
-            continue
-        }
-
-        $ch = $Text[$i]
-
-        if ($ch -eq '(') {
-            $depth++
-        }
-        elseif ($ch -eq ')') {
-            if ($depth -gt 0) { $depth-- }
-        }
-        elseif ($ch -eq ',' -and $depth -eq 0 -and $caseDepth -eq 0) {
-            $part = $Text.Substring($start, $i - $start).Trim()
-            if ($part.Length -gt 0) { $items.Add($part) }
-            $start = $i + 1
-        }
-
-        $i++
+    for ($i = 0; $i -lt $Index; $i++) {
+        if ($Text[$i] -eq '(') { $depth++ }
+        elseif ($Text[$i] -eq ')' -and $depth -gt 0) { $depth-- }
     }
 
-    $tail = $Text.Substring($start).Trim()
-    if ($tail.Length -gt 0) { $items.Add($tail) }
-
-    return $items
+    return $depth
 }
 
-function Find-TopLevelKeyword {
-    param(
-        [string]$Text,
-        [string]$Pattern,
-        [int]$StartAt = 0
-    )
+function Find-MatchingParen {
+    param([string]$Text, [int]$OpenIndex)
 
     $depth = 0
-    $caseDepth = 0
-
-    for ($i = $StartAt; $i -lt $Text.Length; $i++) {
-        $remaining = $Text.Substring($i)
-
-        if ([regex]::IsMatch($remaining, '^\bCASE\b', 'IgnoreCase')) {
-            $caseDepth++
-            $i += 3
-            continue
-        }
-
-        if ([regex]::IsMatch($remaining, '^\bEND\b', 'IgnoreCase')) {
-            if ($caseDepth -gt 0) { $caseDepth-- }
-            $i += 2
-            continue
-        }
-
-        $ch = $Text[$i]
-
-        if ($ch -eq '(') {
+    for ($i = $OpenIndex; $i -lt $Text.Length; $i++) {
+        if ($Text[$i] -eq '(') {
             $depth++
         }
-        elseif ($ch -eq ')') {
-            if ($depth -gt 0) { $depth-- }
-        }
-
-        if ($depth -eq 0 -and $caseDepth -eq 0) {
-            $m = [regex]::Match(
-                $Text.Substring($i),
-                '^' + $Pattern,
-                [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-            )
-
-            if ($m.Success) {
-                return $i
-            }
+        elseif ($Text[$i] -eq ')') {
+            $depth--
+            if ($depth -eq 0) { return $i }
         }
     }
 
     return -1
 }
 
-function Split-SqlStatements {
+function Get-TopLevelMatches {
+    param([string]$Text, [string]$Pattern)
+
+    $matches = New-Object System.Collections.Generic.List[object]
+    $rx = [regex]::new($Pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+
+    foreach ($m in $rx.Matches($Text)) {
+        if ((Get-ParenDepthAt -Text $Text -Index $m.Index) -eq 0) {
+            $matches.Add($m)
+        }
+    }
+
+    return $matches
+}
+
+function Get-FirstTopLevelMatch {
+    param([string]$Text, [string]$Pattern)
+
+    $matches = Get-TopLevelMatches -Text $Text -Pattern $Pattern
+    if ($matches.Count -eq 0) { return $null }
+    return $matches[0]
+}
+
+function Split-TopLevelByComma {
     param([string]$Text)
 
     $items = New-Object System.Collections.Generic.List[string]
-
-    $start = 0
     $depth = 0
+    $start = 0
 
     for ($i = 0; $i -lt $Text.Length; $i++) {
         $ch = $Text[$i]
@@ -345,15 +159,14 @@ function Split-SqlStatements {
         elseif ($ch -eq ')') {
             if ($depth -gt 0) { $depth-- }
         }
-        elseif ($ch -eq ';' -and $depth -eq 0) {
-            $part = $Text.Substring($start, $i - $start).Trim()
-            if ($part.Length -gt 0) { $items.Add($part) }
+        elseif ($ch -eq ',' -and $depth -eq 0) {
+            $items.Add((Normalize-Space $Text.Substring($start, $i - $start)))
             $start = $i + 1
         }
     }
 
-    $tail = $Text.Substring($start).Trim()
-    if ($tail.Length -gt 0) { $items.Add($tail) }
+    $last = Normalize-Space $Text.Substring($start)
+    if ($last.Length -gt 0) { $items.Add($last) }
 
     return $items
 }
@@ -361,2073 +174,1157 @@ function Split-SqlStatements {
 function Split-TopLevelLogical {
     param([string]$Text)
 
-    $parts = New-Object System.Collections.Generic.List[object]
+    $parts = New-Object System.Collections.Generic.List[string]
+    $matches = Get-TopLevelMatches -Text $Text -Pattern '\b(AND|OR)\b'
+
+    if ($matches.Count -eq 0) {
+        $parts.Add((Normalize-Space $Text))
+        return $parts
+    }
 
     $start = 0
-    $depth = 0
-    $i = 0
-    $currentConnector = ""
 
-    while ($i -lt $Text.Length) {
-        $ch = $Text[$i]
-
-        if ($ch -eq '(') {
-            $depth++
-            $i++
-            continue
+    foreach ($m in $matches) {
+        if ($m.Index -gt $start) {
+            $segment = Normalize-Space $Text.Substring($start, $m.Index - $start)
+            if ($segment.Length -gt 0) { $parts.Add($segment) }
         }
 
-        if ($ch -eq ')') {
-            if ($depth -gt 0) { $depth-- }
-            $i++
-            continue
-        }
-
-        if ($depth -eq 0) {
-            $remaining = $Text.Substring($i)
-            $m = [regex]::Match($remaining, '^\s+(AND|OR)\s+', 'IgnoreCase')
-
-            if ($m.Success) {
-                $condition = $Text.Substring($start, $i - $start).Trim()
-
-                if ($condition.Length -gt 0) {
-                    $parts.Add([pscustomobject]@{
-                            Connector = $currentConnector
-                            Text      = $condition
-                        })
-                }
-
-                $currentConnector = $m.Groups[1].Value.ToUpperInvariant()
-                $i += $m.Length
-                $start = $i
-                continue
-            }
-        }
-
-        $i++
+        $start = $m.Index
     }
 
-    $tail = $Text.Substring($start).Trim()
-    if ($tail.Length -gt 0) {
-        $parts.Add([pscustomobject]@{
-                Connector = $currentConnector
-                Text      = $tail
-            })
-    }
+    $tail = Normalize-Space $Text.Substring($start)
+    if ($tail.Length -gt 0) { $parts.Add($tail) }
 
     return $parts
 }
 
-# ======================================================================
-# SELECT expression formatters
-# ======================================================================
-
-function Format-CaseExpression {
+function Add-IndentedLines {
     param(
-        [string]$Expression,
-        [string]$Indent
+        [System.Collections.Generic.List[string]]$Out,
+        [string[]]$Lines,
+        [int]$Indent
     )
 
-    # ------------------------------------------------------------------
-    # Formats CASE expressions inside a SELECT list.
-    #
-    # Important:
-    #   $Indent may contain "SELECT " when the CASE is the first selected
-    #   expression:
-    #
-    #       SELECT CASE
-    #                WHEN ...
-    #
-    #   Only the first CASE line should use the full prefix.
-    #   The following WHEN / ELSE / END lines must align using spaces of
-    #   the same length, not repeat "SELECT".
-    # ------------------------------------------------------------------
+    $prefix = ' ' * $Indent
 
-    $lines = New-Object System.Collections.Generic.List[string]
-
-    $expr = $Expression.Trim()
-    $expr = [regex]::Replace($expr, '\bCASE\b', "`nCASE", 'IgnoreCase')
-    $expr = [regex]::Replace($expr, '\bWHEN\b', "`nWHEN", 'IgnoreCase')
-    $expr = [regex]::Replace($expr, '\bELSE\b', "`nELSE", 'IgnoreCase')
-    $expr = [regex]::Replace($expr, '\bEND\b', "`nEND", 'IgnoreCase')
-
-    $rawLines = $expr -split "`n" |
-        ForEach-Object { $_.Trim() } |
-        Where-Object { $_ -ne "" }
-
-    $continuationIndent = ' ' * $Indent.Length
-
-    foreach ($line in $rawLines) {
-        if ($line -match '^CASE\b') {
-            $lines.Add($Indent + $line)
-        }
-        elseif ($line -match '^WHEN\b') {
-            $lines.Add($continuationIndent + '  ' + $line)
-        }
-        elseif ($line -match '^ELSE\b') {
-            $lines.Add($continuationIndent + '  ' + $line)
-        }
-        elseif ($line -match '^END\b') {
-            $lines.Add($continuationIndent + $line)
+    foreach ($line in $Lines) {
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            $Out.Add("")
         }
         else {
-            $lines.Add($continuationIndent + $line)
+            $Out.Add($prefix + $line.TrimEnd())
         }
     }
-
-    return $lines
 }
 
-function Format-RowNumberExpression {
-    param(
-        [string]$Expression,
-        [string]$Indent
-    )
-
-    $lines = New-Object System.Collections.Generic.List[string]
-
-    $m = [regex]::Match(
-        $Expression.Trim(),
-        '^ROW_NUMBER\s*\(\s*\)\s+OVER\s*\(\s*PARTITION\s+BY\s+(.+?)\s+ORDER\s+BY\s+(.+?)\s*\)\s+AS\s+(.+)$',
-        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-    )
-
-    if ($m.Success) {
-        $partitionBy = $m.Groups[1].Value.Trim()
-        $orderBy = $m.Groups[2].Value.Trim()
-        $alias = $m.Groups[3].Value.Trim()
-
-        $lines.Add($Indent + 'ROW_NUMBER ()')
-        $lines.Add($Indent + '      OVER (PARTITION BY ' + $partitionBy)
-        $lines.Add($Indent + '                ORDER BY ' + $orderBy + ') AS ' + $alias)
-
-        return $lines
-    }
-
-    $lines.Add($Indent + $Expression.Trim())
-    return $lines
-}
-
-function Format-SelectList {
-    param(
-        [string]$SelectKeywordWithPrefix,
-        [string]$ColumnText
-    )
-
-    $lines = New-Object System.Collections.Generic.List[string]
-
-    # ------------------------------------------------------------------
-    # Comment handling inside SELECT lists
-    # ------------------------------------------------------------------
-    # __SQLFMT_EOL__ is inserted after line comments and standalone block
-    # comments before whitespace normalization.
-    #
-    # In a SELECT list, that marker means:
-    #   "the next thing is a new SELECT-list item"
-    #
-    # We convert it to a comma separator before splitting the SELECT list.
-    # This makes comments behave like simple SELECT-list items:
-    #
-    #   A,
-    #   -- comment
-    #   B,
-    #   C, -- inline comment
-    #   D
-    #
-    # becomes items:
-    #   A | SLCOM | B | C | LCOM | D
-    #
-    # Then:
-    #   - SLCOM/BCOM items are printed as their own aligned line.
-    #   - LCOM items are appended to the previous line.
-    # ------------------------------------------------------------------
-    $ColumnText = [regex]::Replace($ColumnText, '\s*__SQLFMT_EOL__\s*', ', ')
-
-    $columns = @(Split-TopLevelComma $ColumnText)
-    $firstPrefix = $SelectKeywordWithPrefix + ' '
-    $contPrefix  = ' ' * $firstPrefix.Length
-
-    # Do not immediately return for a single SELECT expression.
-    # A single expression can still be complex, for example:
-    #
-    #   SELECT CASE WHEN ... THEN ... ELSE ... END AS SEGMENT_CODE
-    #
-    # Simple single-column SELECTs are handled correctly by the loop below.
-
-    for ($i = 0; $i -lt $columns.Count; $i++) {
-        $col = $columns[$i].Trim()
-
-        # A normal item receives a comma when another item follows.
-        # Comment items themselves do not use this suffix because they are
-        # handled in their own branches below.
-        $suffix = if ($i -lt $columns.Count - 1) { ',' } else { '' }
-
-        # Inline line comments belong to the previous SELECT-list item.
-        #
-        # Input:
-        #   G, -- inline comment
-        #   H
-        #
-        # Output:
-        #   G, -- inline comment
-        #   H
-        if ($col -match '^__SQLFMT_LCOM_\d+__$') {
-            if ($lines.Count -gt 0) {
-                $lines[$lines.Count - 1] = $lines[$lines.Count - 1] + ' ' + $col
-            }
-            continue
-        }
-
-        # Standalone line comments behave like a SELECT-list item with no comma.
-        if ($col -match '^__SQLFMT_SLCOM_\d+__$') {
-            if ($i -eq 0) {
-                $lines.Add($firstPrefix + $col)
-            }
-            else {
-                $lines.Add($contPrefix + $col)
-            }
-            continue
-        }
-
-        # Standalone block comments also behave like SELECT-list items.
-        #
-        # Inline block comments, e.g. "B /**/", are part of $col and therefore
-        # pass through the normal expression branch unchanged.
-        if ($col -match '^__SQLFMT_BCOM_\d+__$') {
-            if ($i -eq 0) {
-                $lines.Add($firstPrefix + $col)
-            }
-            else {
-                $lines.Add($contPrefix + $col)
-            }
-            continue
-        }
-
-        if ($i -eq 0) {
-            $linePrefix = $firstPrefix
-        }
-        else {
-            $linePrefix = $contPrefix
-        }
-
-        if ($col -match '^\s*ROW_NUMBER\b') {
-            $rnLines = Format-RowNumberExpression -Expression $col -Indent $linePrefix
-
-            for ($j = 0; $j -lt $rnLines.Count; $j++) {
-                if ($j -eq $rnLines.Count - 1) {
-                    $lines.Add($rnLines[$j] + $suffix)
-                }
-                else {
-                    $lines.Add($rnLines[$j])
-                }
-            }
-        }
-        elseif ($col -match '\bCASE\b') {
-            $caseLines = Format-CaseExpression -Expression $col -Indent $linePrefix
-
-            for ($j = 0; $j -lt $caseLines.Count; $j++) {
-                if ($j -eq $caseLines.Count - 1) {
-                    $lines.Add($caseLines[$j] + $suffix)
-                }
-                else {
-                    $lines.Add($caseLines[$j])
-                }
-            }
-        }
-        else {
-            $lines.Add($linePrefix + $col + $suffix)
-        }
-    }
-
-    return $lines
-}
-
-# ======================================================================
-# Inline subquery formatter
-# ======================================================================
-# Purpose:
-#   Formats SELECT statements that appear inside predicates, for example:
-#
-#       EXISTS (SELECT 1 FROM CUSTOMER C WHERE C.ID = X.ID)
-#
-#   into:
-#
-#       EXISTS (SELECT 1
-#                 FROM CUSTOMER C
-#                WHERE C.ID = X.ID)
-#
-# Design note:
-#   This function does not create a separate "subquery formatter".
-#   It delegates the inner SELECT to the same Format-SelectStatement function
-#   used by normal SELECTs, CTEs, and MERGE source SELECTs.
-#
-#   The only special thing here is the OpeningPrefix:
-#
-#       "EXISTS ("
-#       "COL IN ("
-#
-#   That prefix length shifts the inner SELECT block to the correct column.
-# ======================================================================
-
-function Format-InlineSubqueries {
+function Strip-TrailingSemicolon {
     param([string]$Text)
 
-    # ------------------------------------------------------------------
-    # Formats inline SELECTs that appear inside predicates.
-    #
-    # Examples:
-    #
-    #   EXISTS (SELECT 1 FROM T WHERE ...)
-    #
-    # becomes:
-    #
-    #   EXISTS (SELECT 1
-    #             FROM T
-    #            WHERE ...)
-    #
-    #   COL IN (SELECT X FROM T WHERE ...)
-    #
-    # becomes:
-    #
-    #   COL IN (SELECT X
-    #             FROM T
-    #            WHERE ...)
-    #
-    # Important:
-    #   This function does not create a separate subquery formatter.
-    #   It delegates to Format-SelectStatement with an OpeningPrefix.
-    # ------------------------------------------------------------------
-
-    $result = $Text
-    $searchStart = 0
-
-    while ($searchStart -lt $result.Length) {
-        $match = [regex]::Match(
-            $result.Substring($searchStart),
-            '(EXISTS\s*\(\s*SELECT\b|[A-Z0-9_\.]+\s+IN\s*\(\s*SELECT\b)',
-            [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-        )
-
-        if (-not $match.Success) {
-            break
-        }
-
-        $absoluteMatchIndex = $searchStart + $match.Index
-        $openParenIndex = $result.IndexOf('(', $absoluteMatchIndex)
-
-        if ($openParenIndex -lt 0) {
-            break
-        }
-
-        # Find the matching closing parenthesis for this subquery.
-        # This is safer than regex-only matching because the subquery may
-        # contain nested parentheses in functions or predicates.
-        $depth = 0
-        $closeParenIndex = -1
-
-        for ($i = $openParenIndex; $i -lt $result.Length; $i++) {
-            if ($result[$i] -eq '(') {
-                $depth++
-            }
-            elseif ($result[$i] -eq ')') {
-                $depth--
-
-                if ($depth -eq 0) {
-                    $closeParenIndex = $i
-                    break
-                }
-            }
-        }
-
-        if ($closeParenIndex -lt 0) {
-            break
-        }
-
-        $prefix = $result.Substring($absoluteMatchIndex, $openParenIndex - $absoluteMatchIndex + 1)
-        $innerSql = $result.Substring($openParenIndex + 1, $closeParenIndex - $openParenIndex - 1).Trim()
-
-        if ($innerSql -match '^SELECT\b') {
-            # The inline SELECT formatter receives only the local prefix:
-            #
-            #   EXISTS (
-            #   C.COL IN (
-            #
-            # That is correct for the first line because the text before the match
-            # remains in the predicate. However, continuation lines also need to know
-            # where the inline subquery started on the current physical line.
-            #
-            # Example:
-            #
-            #   AND EXISTS (SELECT 1
-            #                 FROM CUSTOMER C
-            #                WHERE ...)
-            #
-            # The "FROM" line must be shifted by the column where EXISTS started.
-            $lineStartIndex = $result.LastIndexOf("`n", [Math]::Max(0, $absoluteMatchIndex - 1))
-
-            if ($lineStartIndex -lt 0) {
-                $subqueryStartColumn = $absoluteMatchIndex
-            }
-            else {
-                $subqueryStartColumn = $absoluteMatchIndex - $lineStartIndex - 1
-            }
-
-            $formattedLines = @(Format-SelectStatement -Sql $innerSql -OpeningPrefix $prefix)
-
-            # Do not add any extra indentation here.
-            #
-            # Format-SelectStatement already uses OpeningPrefix to align the inner
-            # SELECT block correctly:
-            #
-            #   EXISTS (SELECT 1
-            #             FROM T
-            #            WHERE ...)
-            #
-            # Adding the outer column again causes double-indentation, so we leave the
-            # formatted lines exactly as returned.
-
-            $formattedText = ($formattedLines -join $script:NewLine) + ')'
-        
-            $result =
-            $result.Substring(0, $absoluteMatchIndex) +
-            $formattedText +
-            $result.Substring($closeParenIndex + 1)
-        
-            $searchStart = $absoluteMatchIndex + $formattedText.Length
-        }
-        else {
-            $searchStart = $closeParenIndex + 1
-        }
-    }
-
-    return $result
+    return ($Text.Trim() -replace ';\s*$', '')
 }
 
-function Format-InlineSubqueriesInLine {
-    param([string]$Line)
+function Remove-LeadingProtectedCommentsForDetection {
+    param([string]$Text)
 
-    # ------------------------------------------------------------------
-    # Formats inline subqueries inside a final rendered predicate line.
-    #
-    # Important design rule:
-    #   Do NOT add the absolute column again.
-    #
-    # Why:
-    #   Format-SelectStatement already aligns continuation lines using the
-    #   OpeningPrefix we give it.
-    #
-    # Example:
-    #   OR C.CUSTOMER_ID IN (SELECT P.CUSTOMER_ID FROM CUSTOMER_PREFERENCE P WHERE ...)
-    #
-    # We pass this as OpeningPrefix:
-    #   "OR C.CUSTOMER_ID IN ("
-    #
-    # So Format-SelectStatement already knows to produce:
-    #   OR C.CUSTOMER_ID IN (SELECT P.CUSTOMER_ID
-    #                          FROM CUSTOMER_PREFERENCE P
-    #                         WHERE ...)
-    #
-    # Adding absoluteMatchIndex again would double-indent the FROM/WHERE lines.
-    # ------------------------------------------------------------------
+    $work = $Text.Trim()
 
-    $result = $Line
-    $searchStart = 0
-
-    while ($searchStart -lt $result.Length) {
-        $match = [regex]::Match(
-            $result.Substring($searchStart),
-            '(EXISTS\s*\(\s*SELECT\b|[A-Z0-9_\.]+\s+IN\s*\(\s*SELECT\b)',
-            [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-        )
-
-        if (-not $match.Success) {
-            break
-        }
-
-        $absoluteMatchIndex = $searchStart + $match.Index
-        $openParenIndex = $result.IndexOf('(', $absoluteMatchIndex)
-
-        if ($openParenIndex -lt 0) {
-            break
-        }
-
-        # Find the matching closing parenthesis for the inline SELECT.
-        # This safely handles nested function calls or predicates inside it.
-        $depth = 0
-        $closeParenIndex = -1
-
-        for ($i = $openParenIndex; $i -lt $result.Length; $i++) {
-            if ($result[$i] -eq '(') {
-                $depth++
-            }
-            elseif ($result[$i] -eq ')') {
-                $depth--
-
-                if ($depth -eq 0) {
-                    $closeParenIndex = $i
-                    break
-                }
-            }
-        }
-
-        if ($closeParenIndex -lt 0) {
-            break
-        }
-
-        # Prefix from the current line, for example:
-        #   EXISTS (
-        #   C.CUSTOMER_ID IN (
-        #
-        # This is the local prefix that controls the subquery alignment.
-        $prefix = $result.Substring($absoluteMatchIndex, $openParenIndex - $absoluteMatchIndex + 1)
-
-        $innerSql = $result.Substring(
-            $openParenIndex + 1,
-            $closeParenIndex - $openParenIndex - 1
+    # The statement may begin with several protected comments separated by newlines.
+    # Use Singleline behavior so the remaining SQL after the comment block is preserved.
+    while ([regex]::IsMatch($work, '^\s*__SQLFMT_(LCOM|BCOM)_\d+__\s*', [System.Text.RegularExpressions.RegexOptions]::Singleline)) {
+        $work = [regex]::Replace(
+            $work,
+            '^\s*__SQLFMT_(LCOM|BCOM)_\d+__\s*',
+            '',
+            [System.Text.RegularExpressions.RegexOptions]::Singleline
         ).Trim()
-
-        if ($innerSql -match '^SELECT\b') {
-            $formattedLines = @(Format-SelectStatement -Sql $innerSql -OpeningPrefix $prefix)
-
-            # No extra indentation here.
-            # Format-SelectStatement already uses OpeningPrefix to align:
-            #
-            #   EXISTS (SELECT ...
-            #             FROM ...
-            #            WHERE ...)
-            $formattedText = ($formattedLines -join $script:NewLine) + ')'
-
-            $result =
-            $result.Substring(0, $absoluteMatchIndex) +
-            $formattedText +
-            $result.Substring($closeParenIndex + 1)
-
-            $searchStart = $absoluteMatchIndex + $formattedText.Length
-        }
-        else {
-            $searchStart = $closeParenIndex + 1
-        }
     }
 
-    return $result
+    return $work
 }
 
-# ======================================================================
-# SELECT clause formatting
-# ======================================================================
 
-function Split-SelectClauses {
-    param([string]$Sql)
+function Test-RoutineStatementComplete {
+    param([string]$Text)
 
-    $patterns = [ordered]@{
-        From    = '\bFROM\b'
-        Where   = '\bWHERE\b'
-        GroupBy = '\bGROUP\s+BY\b'
-        Having  = '\bHAVING\b'
-        OrderBy = '\bORDER\s+BY\b'
-        Fetch   = '\bFETCH\s+FIRST\b'
-        Limit   = '\bLIMIT\b'
-        WithIso = '\bWITH\s+(UR|NC)\b'
+    $work = (Remove-LeadingProtectedCommentsForDetection $Text).ToUpperInvariant()
+
+    if ($work -notmatch '^\s*CREATE\s+(OR\s+REPLACE\s+)?(PROCEDURE|FUNCTION)\b') {
+        return $false
     }
 
-    $positions = @{}
-
-    foreach ($name in $patterns.Keys) {
-        $idx = Find-TopLevelKeyword -Text $Sql -Pattern $patterns[$name]
-        if ($idx -ge 0) {
-            $positions[$name] = $idx
-        }
-    }
-
-    $ordered = $positions.GetEnumerator() | Sort-Object Value
-    $result = [ordered]@{}
-
-    if ($ordered.Count -eq 0) {
-        $result.Select = $Sql
-        return $result
-    }
-
-    $result.Select = $Sql.Substring(0, $ordered[0].Value).Trim()
-
-    for ($i = 0; $i -lt $ordered.Count; $i++) {
-        $name = $ordered[$i].Key
-        $start = $ordered[$i].Value
-
-        if ($i + 1 -lt $ordered.Count) {
-            $end = $ordered[$i + 1].Value
-        }
-        else {
-            $end = $Sql.Length
-        }
-
-        $result[$name] = $Sql.Substring($start, $end - $start).Trim()
-    }
-
-    return $result
-}
-
-function Add-SelectClauseLine {
-    param(
-        [System.Collections.Generic.List[string]]$Lines,
-        [string]$OpeningPrefix,
-        [string]$Keyword,
-        [string]$Text
-    )
-
-    # Clause alignment is local to the SELECT block.
-    # OpeningPrefix shifts the whole SELECT block to the right.
-    #
-    # Normal:
-    # SELECT ...
-    #   FROM ...
-    #  WHERE ...
-    #
-    # CTE:
-    # WITH X AS ( SELECT ...
-    #               FROM ...
-    #              WHERE ...
-
-    $base = ' ' * $OpeningPrefix.Length
-
-    switch ($Keyword) {
-        'FROM' {
-            $Lines.Add($base + '  FROM ' + $Text)
-        }
-        'WHERE' {
-            $Lines.Add($base + ' WHERE ' + $Text)
-        }
-        'GROUP BY' {
-            $Lines.Add($base + ' GROUP BY ' + $Text)
-        }
-        'HAVING' {
-            $Lines.Add($base + ' HAVING ' + $Text)
-        }
-        'ORDER BY' {
-            $Lines.Add($base + ' ORDER BY ' + $Text)
-        }
-        'FETCH FIRST' {
-            $Lines.Add($base + ' FETCH FIRST ' + $Text)
-        }
-        'LIMIT' {
-            $Lines.Add($base + ' LIMIT ' + $Text)
-        }
-        'WITH' {
-            $Lines.Add($base + '  WITH ' + $Text)
-        }
-    }
-}
-
-function Format-PredicatePart {
-    param(
-        [string]$LinePrefix,
-        [string]$ConditionText
-    )
-
-    # ------------------------------------------------------------------
-    # Formats one predicate part.
-    #
-    # Simple rule:
-    #   If the predicate contains:
-    #
-    #       EXISTS (SELECT ...)
-    #       X IN (SELECT ...)
-    #
-    #   then format the inner SELECT exactly like every other SELECT.
-    #
-    # Important:
-    #   The indentation prefix must be calculated from the CURRENT LINE only.
-    #
-    # Why:
-    #   In a condition like this:
-    #
-    #       AND (   A = 1
-    #            OR B IN (SELECT ...))
-    #
-    #   the text before "B IN (" contains a previous line.
-    #   We must NOT count the previous line's characters.
-    #   We only count:
-    #
-    #            OR B IN (
-    #
-    # ------------------------------------------------------------------
-
-    $lines = New-Object System.Collections.Generic.List[string]
-    $condition = $ConditionText.Trim()
-
-    $match = [regex]::Match(
-        $condition,
-        '(EXISTS\s*\(\s*SELECT\b|[A-Z0-9_\.]+\s+IN\s*\(\s*SELECT\b)',
+    $tokens = [regex]::Matches(
+        $work,
+        '\bBEGIN\s+ATOMIC\b|\bBEGIN\b|\bCASE\b|\bLOOP\b|\bIF\b|\bEND\s+IF\b|\bEND\s+LOOP\b|\bEND\b',
         [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
     )
 
-    if (-not $match.Success) {
-        $lines.Add($LinePrefix + $condition)
-        return $lines
-    }
-
-    $matchIndex = $match.Index
-    $openParenIndex = $condition.IndexOf('(', $matchIndex)
-
-    if ($openParenIndex -lt 0) {
-        $lines.Add($LinePrefix + $condition)
-        return $lines
-    }
-
-    # Find the closing parenthesis of the inline SELECT.
     $depth = 0
-    $closeParenIndex = -1
 
-    for ($i = $openParenIndex; $i -lt $condition.Length; $i++) {
-        if ($condition[$i] -eq '(') {
-            $depth++
-        }
-        elseif ($condition[$i] -eq ')') {
-            $depth--
+    foreach ($tokenMatch in $tokens) {
+        $token = $tokenMatch.Value.ToUpperInvariant() -replace '\s+', ' '
 
-            if ($depth -eq 0) {
-                $closeParenIndex = $i
+        switch -Regex ($token) {
+            '^BEGIN' {
+                $depth++
+                break
+            }
+            '^CASE$' {
+                $depth++
+                break
+            }
+            '^LOOP$' {
+                $depth++
+                break
+            }
+            '^IF$' {
+                $depth++
+                break
+            }
+            '^END IF$' {
+                if ($depth -gt 0) { $depth-- }
+                break
+            }
+            '^END LOOP$' {
+                if ($depth -gt 0) { $depth-- }
+                break
+            }
+            '^END$' {
+                if ($depth -gt 0) { $depth-- }
                 break
             }
         }
     }
 
-    if ($closeParenIndex -lt 0) {
-        $lines.Add($LinePrefix + $condition)
-        return $lines
-    }
-
-    $beforeInline = $condition.Substring(0, $matchIndex)
-    $inlinePrefix = $condition.Substring($matchIndex, $openParenIndex - $matchIndex + 1)
-    $innerSql = $condition.Substring($openParenIndex + 1, $closeParenIndex - $openParenIndex - 1).Trim()
-    $afterInline = $condition.Substring($closeParenIndex + 1)
-
-    if ($innerSql -notmatch '^SELECT\b') {
-        $lines.Add($LinePrefix + $condition)
-        return $lines
-    }
-
-    # Build the visible text that appears before the inline SELECT.
-    $visibleBeforeInline = $LinePrefix + $beforeInline
-
-    # The bug was here:
-    #   We were using the whole $visibleBeforeInline as part of the SELECT prefix.
-    #
-    # Instead, split it at the LAST newline.
-    # Everything before the last newline is already-rendered text.
-    # Only the current line prefix should control the inner SELECT alignment.
-    $lastNewLine = $visibleBeforeInline.LastIndexOf("`n")
-
-    if ($lastNewLine -ge 0) {
-        $alreadyRenderedText = $visibleBeforeInline.Substring(0, $lastNewLine + 1)
-        $currentLinePrefix = $visibleBeforeInline.Substring($lastNewLine + 1)
-    }
-    else {
-        $alreadyRenderedText = ""
-        $currentLinePrefix = $visibleBeforeInline
-    }
-
-    # This is the actual prefix for the inner SELECT.
-    # Example:
-    #        OR C.CUSTOMER_ID IN (
-    #
-    # The SELECT formatter will then align FROM / WHERE based only on this.
-    $openingPrefix = $currentLinePrefix + $inlinePrefix
-
-    $formatted = @(Format-SelectStatement -Sql $innerSql -OpeningPrefix $openingPrefix)
-
-    if ($formatted.Count -gt 0) {
-        $formatted[$formatted.Count - 1] = $formatted[$formatted.Count - 1] + ')' + $afterInline
-    }
-
-    # Put back the already-rendered previous part only once.
-    if ($formatted.Count -gt 0) {
-        $formatted[0] = $alreadyRenderedText + $formatted[0]
-    }
-
-    foreach ($line in $formatted) {
-        $lines.Add($line)
-    }
-
-    return $lines
+    return ($depth -eq 0 -and $work -match '\bEND\s*$')
 }
 
-function Format-PredicateLines {
-    param(
-        [string]$OpeningPrefix,
-        [string]$Keyword,
-        [string]$Predicate
-    )
-
-    $lines = New-Object System.Collections.Generic.List[string]
-
-    $base = ' ' * $OpeningPrefix.Length
-
-    # Before deciding whether the predicate fits on one line, format any
-    # nested SELECTs inside EXISTS (...) or IN (...). This keeps the same
-    # unified SELECT formatting everywhere.
-    # Do not format inline subqueries here.
-    # At this point we do not yet know their final rendered column.
-    # Inline subqueries are formatted later per final predicate line by
-    # Format-InlineSubqueriesInLine.
-    # $Predicate = Format-InlineSubqueries $Predicate
-
-    # Format long parenthesized OR groups inside predicates.
-    #
-    # Example:
-    #   AND (A = 1 OR B IN (SELECT ...))
-    #
-    # becomes:
-    #   AND (   A = 1
-    #        OR B IN (SELECT ...))
-    #
-    # This is intentionally conservative: it only changes groups that contain
-    # a top-level OR inside the parentheses.
-    $Predicate = [regex]::Replace(
-        $Predicate,
-        '\(\s*(.+?)\s+OR\s+(.+?)\s*\)',
-        {
-            param($m)
-
-            $leftSide = $m.Groups[1].Value.Trim()
-            $rightSide = $m.Groups[2].Value.Trim()
-
-            if (($leftSide.Length + $rightSide.Length + 6) -lt 80) {
-                return $m.Value
-            }
-
-            return "(   $leftSide" + $script:NewLine + "        OR $rightSide)"
-        },
-        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-    )
-
-    if ($Keyword -eq 'WHERE') {
-        $firstPrefix = $base + ' WHERE '
-        $contAnd = $base + '   AND '
-        $contOr = $base + '    OR '
-    }
-    elseif ($Keyword -eq 'HAVING') {
-        # HAVING is six characters, same width as SELECT / WHERE.
-        # It should align like:
-        #
-        #  WHERE ...
-        # HAVING ...
-        #
-        # inside the same local SELECT block.
-        $firstPrefix = $base + 'HAVING '
-        $contAnd = $base + '   AND '
-        $contOr = $base + '    OR '
-    }
-    else {
-        $firstPrefix = $base + ' ' + $Keyword + ' '
-        $contAnd = $base + ' AND '
-        $contOr = $base + '  OR '
-    }
-
-    if (($firstPrefix.Length + $Predicate.Length) -le $script:MaxLineLength) {
-        foreach ($line in (Format-PredicatePart -LinePrefix $firstPrefix -ConditionText $Predicate)) {
-            $lines.Add($line)
-        }
-
-        return $lines
-    }
-
-    $parts = @(Split-TopLevelLogical $Predicate)
-
-    for ($i = 0; $i -lt $parts.Count; $i++) {
-        $connector = $parts[$i].Connector
-        $text = $parts[$i].Text
-
-        if ($i -eq 0) {
-            foreach ($line in (Format-PredicatePart -LinePrefix $firstPrefix -ConditionText $text)) {
-                $lines.Add($line)
-            }
-        }
-        elseif ($connector -eq 'AND') {
-            foreach ($line in (Format-PredicatePart -LinePrefix $contAnd -ConditionText $text)) {
-                $lines.Add($line)
-            }
-        }
-        elseif ($connector -eq 'OR') {
-            foreach ($line in (Format-PredicatePart -LinePrefix $contOr -ConditionText $text)) {
-                $lines.Add($line)
-            }
-        }
-        else {
-            foreach ($line in (Format-PredicatePart -LinePrefix $firstPrefix -ConditionText $text)) {
-                $lines.Add($line)
-            }
-        }
-    }
-
-    # Predicate lines are already fully formatted before being added.
-    # Do not re-process subqueries here, because that causes double indentation.
-    return $lines
-}
-
-function Format-FromAndJoins {
-    param(
-        [string]$OpeningPrefix,
-        [string]$FromClause
-    )
-
-    $lines = New-Object System.Collections.Generic.List[string]
-    $base = ' ' * $OpeningPrefix.Length
-
-    $text = $FromClause.Trim()
-    $text = [regex]::Replace(
-        $text,
-        '\s+(INNER\s+JOIN|LEFT\s+JOIN|RIGHT\s+JOIN|FULL\s+JOIN)\s+',
-        "`n`$1 ",
-        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-    )
-
-    $parts = $text -split "`n"
-
-    foreach ($part in $parts) {
-        $t = $part.Trim()
-
-        if ($t -match '^FROM\b') {
-            $lines.Add($base + '  ' + $t)
-        }
-        elseif ($t -match '^INNER JOIN\b') {
-            $lines.Add($base + ' ' + $t)
-        }
-        elseif ($t -match '^LEFT JOIN\b') {
-            $lines.Add($base + '  ' + $t)
-        }
-        elseif ($t -match '^RIGHT JOIN\b') {
-            $lines.Add($base + ' ' + $t)
-        }
-        elseif ($t -match '^FULL JOIN\b') {
-            $lines.Add($base + '  ' + $t)
-        }
-        else {
-            $lines.Add($base + '  ' + $t)
-        }
-    }
-
-    return $lines
-}
-
-function Format-SelectStatement {
-    param(
-        [string]$Sql,
-        [string]$OpeningPrefix = ""
-    )
-
-    $out = New-Object System.Collections.Generic.List[string]
-
-    $Sql = Normalize-SqlWhitespace $Sql
-    $Sql = Convert-SqlKeywordsToUpper $Sql
-
-    $clauses = Split-SelectClauses $Sql
-    $selectPart = $clauses.Select.Trim()
-
-    if ($selectPart -match '^SELECT\s+DISTINCT\s+') {
-        $selectKeyword = $OpeningPrefix + 'SELECT DISTINCT'
-        $columnText = $selectPart -replace '^SELECT\s+DISTINCT\s+', ''
-    }
-    else {
-        $selectKeyword = $OpeningPrefix + 'SELECT'
-        $columnText = $selectPart -replace '^SELECT\s+', ''
-    }
-
-    foreach ($line in (Format-SelectList -SelectKeywordWithPrefix $selectKeyword -ColumnText $columnText)) {
-        $out.Add($line)
-    }
-
-    if ($clauses.Contains('From')) {
-        foreach ($line in (Format-FromAndJoins -OpeningPrefix $OpeningPrefix -FromClause $clauses.From)) {
-            $out.Add($line)
-        }
-    }
-
-    if ($clauses.Contains('Where')) {
-        $predicate = ($clauses.Where -replace '^WHERE\s+', '').Trim()
-
-        foreach ($line in (Format-PredicateLines -OpeningPrefix $OpeningPrefix -Keyword 'WHERE' -Predicate $predicate)) {
-            $out.Add($line)
-        }
-    }
-
-	if ($clauses.Contains('GroupBy')) {
-		$groupText = ($clauses.GroupBy -replace '^GROUP\s+BY\s+', '').Trim()
-		$base = ' ' * $OpeningPrefix.Length
-		$oneLine = $base + ' GROUP BY ' + $groupText
-	
-		# Keep GROUP BY on one line when it fits inside the configured threshold.
-		# Only split by commas when the full line would pass MaxLineLength.
-		if ($oneLine.Length -le $script:MaxLineLength) {
-			$out.Add($oneLine)
-		}
-		else {
-			$items = @(Split-TopLevelComma $groupText)
-	
-			for ($i = 0; $i -lt $items.Count; $i++) {
-				$suffix = if ($i -lt $items.Count - 1) { ',' } else { '' }
-	
-				if ($i -eq 0) {
-					$out.Add($base + ' GROUP BY ' + $items[$i] + $suffix)
-				}
-				else {
-					$out.Add($base + '          ' + $items[$i] + $suffix)
-				}
-			}
-		}
-	}
-
-    if ($clauses.Contains('Having')) {
-        $havingText = ($clauses.Having -replace '^HAVING\s+', '').Trim()
-
-        foreach ($line in (Format-PredicateLines -OpeningPrefix $OpeningPrefix -Keyword 'HAVING' -Predicate $havingText)) {
-            $out.Add($line)
-        }
-    }
-
-	if ($clauses.Contains('OrderBy')) {
-		$orderText = ($clauses.OrderBy -replace '^ORDER\s+BY\s+', '').Trim()
-		$base = ' ' * $OpeningPrefix.Length
-		$oneLine = $base + ' ORDER BY ' + $orderText
-	
-		# Keep ORDER BY on one line when it fits inside the configured threshold.
-		# Only split by commas when the full line would pass MaxLineLength.
-		if ($oneLine.Length -le $script:MaxLineLength) {
-			$out.Add($oneLine)
-		}
-		else {
-			$items = @(Split-TopLevelComma $orderText)
-	
-			for ($i = 0; $i -lt $items.Count; $i++) {
-				$suffix = if ($i -lt $items.Count - 1) { ',' } else { '' }
-	
-				if ($i -eq 0) {
-					$out.Add($base + ' ORDER BY ' + $items[$i] + $suffix)
-				}
-				else {
-					$out.Add($base + '          ' + $items[$i] + $suffix)
-				}
-			}
-		}
-	}
-
-    if ($clauses.Contains('Fetch')) {
-        $fetchText = ($clauses.Fetch -replace '^FETCH\s+FIRST\s+', '').Trim()
-        Add-SelectClauseLine -Lines $out -OpeningPrefix $OpeningPrefix -Keyword 'FETCH FIRST' -Text $fetchText
-    }
-
-    if ($clauses.Contains('Limit')) {
-        $limitText = ($clauses.Limit -replace '^LIMIT\s+', '').Trim()
-        Add-SelectClauseLine -Lines $out -OpeningPrefix $OpeningPrefix -Keyword 'LIMIT' -Text $limitText
-    }
-
-    if ($clauses.Contains('WithIso')) {
-        $isoText = ($clauses.WithIso -replace '^WITH\s+', '').Trim()
-        Add-SelectClauseLine -Lines $out -OpeningPrefix $OpeningPrefix -Keyword 'WITH' -Text $isoText
-    }
-
-    return $out
-}
-
-# ======================================================================
-# Compound SELECT formatter
-# ======================================================================
-# Handles:
-#
-#   SELECT ...
-#   UNION
-#   SELECT ...
-#
-#   SELECT ...
-#   UNION ALL
-#   SELECT ...
-#   EXCEPT
-#   SELECT ...
-#
-#   SELECT ...
-#   INTERSECT
-#   SELECT ...
-#
-# Design rule:
-#   Each SELECT part is formatted by the same unified SELECT formatter.
-#   UNION / EXCEPT / INTERSECT are just separator lines at column 1.
-# ======================================================================
-
-function Split-CompoundSelect {
+function Split-SqlStatements {
     param([string]$Sql)
 
-    $parts = New-Object System.Collections.Generic.List[string]
-    $ops   = New-Object System.Collections.Generic.List[string]
-
-    $start = 0
+    $statements = New-Object System.Collections.Generic.List[string]
     $depth = 0
-    $caseDepth = 0
-    $i = 0
+    $start = 0
+    $insideRoutine = $false
 
-    while ($i -lt $Sql.Length) {
-        $remaining = $Sql.Substring($i)
-
-        if ([regex]::IsMatch($remaining, '^\bCASE\b', 'IgnoreCase')) {
-            $caseDepth++
-            $i += 4
-            continue
-        }
-
-        if ([regex]::IsMatch($remaining, '^\bEND\b', 'IgnoreCase')) {
-            if ($caseDepth -gt 0) { $caseDepth-- }
-            $i += 3
-            continue
-        }
-
+    for ($i = 0; $i -lt $Sql.Length; $i++) {
         $ch = $Sql[$i]
 
         if ($ch -eq '(') {
             $depth++
-            $i++
-            continue
         }
-
-        if ($ch -eq ')') {
+        elseif ($ch -eq ')') {
             if ($depth -gt 0) { $depth-- }
-            $i++
-            continue
         }
+        elseif ($ch -eq ';' -and $depth -eq 0) {
+            $candidate = $Sql.Substring($start, $i - $start).Trim()
 
-        if ($depth -eq 0 -and $caseDepth -eq 0) {
-            $m = [regex]::Match(
-                $remaining,
-                '^\s*\b(UNION\s+ALL|UNION|EXCEPT|INTERSECT)\b\s*',
-                [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-            )
+            if ($candidate.Length -gt 0) {
+                $detect = Remove-LeadingProtectedCommentsForDetection $candidate
 
-            if ($m.Success) {
-                $part = $Sql.Substring($start, $i - $start).Trim()
-
-                if ($part.Length -gt 0) {
-                    $parts.Add($part)
-                    $ops.Add(($m.Groups[1].Value -replace '\s+', ' ').ToUpperInvariant())
+                if (-not $insideRoutine -and $detect -match '^\s*CREATE\s+(OR\s+REPLACE\s+)?(PROCEDURE|FUNCTION)\b') {
+                    $insideRoutine = $true
                 }
 
-                $i += $m.Length
-                $start = $i
-                continue
-            }
-        }
+                if ($insideRoutine) {
+                    # DB2 SQL PL routines contain many semicolons inside BEGIN/END.
+                    # Keep collecting until the real routine-level END; is reached.
+                    # A CASE expression also ends with END, so a simple "\bEND$" check
+                    # incorrectly stops at RETURN CASE ... END; inside functions.
+                    if (-not (Test-RoutineStatementComplete $candidate)) {
+                        continue
+                    }
 
-        $i++
+                    $statements.Add($candidate + ';')
+                    $insideRoutine = $false
+                }
+                else {
+                    $statements.Add($candidate + ';')
+                }
+            }
+
+            $start = $i + 1
+        }
     }
 
     $tail = $Sql.Substring($start).Trim()
-
     if ($tail.Length -gt 0) {
-        $parts.Add($tail)
+        $statements.Add($tail)
     }
 
-    return [pscustomobject]@{
-        Parts = $parts
-        Operators = $ops
-    }
+    return $statements
 }
 
-function Format-CompoundSelectStatement {
-    param(
-        [string]$Sql,
-        [string]$OpeningPrefix = ""
-    )
-
-    $Sql = Normalize-SqlWhitespace $Sql
-    $Sql = Convert-SqlKeywordsToUpper $Sql
-
-    $split = Split-CompoundSelect $Sql
-
-    # No UNION / EXCEPT / INTERSECT found.
-    if ($split.Operators.Count -eq 0) {
-        return Format-SelectStatement -Sql $Sql -OpeningPrefix $OpeningPrefix
-    }
+function Format-CommaList {
+    param([string]$Text, [string]$FirstPrefix, [string]$NextPrefix)
 
     $out = New-Object System.Collections.Generic.List[string]
+    $items = @(Split-TopLevelByComma $Text)
 
-    for ($i = 0; $i -lt $split.Parts.Count; $i++) {
-        $part = [string]$split.Parts[$i]
+    for ($i = 0; $i -lt $items.Count; $i++) {
+        $suffix = if ($i -lt $items.Count - 1) { "," } else { "" }
 
-        # Only the first SELECT receives the external wrapper prefix.
-        # Example:
-        #   WITH X AS ( SELECT ...
-        #
-        # Later compound SELECT parts start normally at column 1:
-        #   UNION ALL
-        #   SELECT ...
         if ($i -eq 0) {
-            $formattedPart = @(Format-SelectStatement -Sql $part -OpeningPrefix $OpeningPrefix)
+            $out.Add($FirstPrefix + $items[$i] + $suffix)
         }
         else {
-            $formattedPart = @(Format-SelectStatement -Sql $part -OpeningPrefix "")
-        }
-
-        foreach ($line in $formattedPart) {
-            $out.Add($line)
-        }
-
-        if ($i -lt $split.Operators.Count) {
-            $out.Add($split.Operators[$i])
+            $out.Add($NextPrefix + $items[$i] + $suffix)
         }
     }
 
     return $out
 }
 
-# ======================================================================
-# WITH formatter
-# ======================================================================
-# This is intentionally small now.
-# It does not format CTE SELECTs itself.
-# It only calculates the CTE prefix and delegates to Format-SelectStatement.
-# ======================================================================
-
-function Format-WithStatement {
-    param([string]$Sql)
-
-    $Sql = Normalize-SqlWhitespace $Sql
-    $Sql = Convert-SqlKeywordsToUpper $Sql
+function Format-CaseExpression {
+    param([string]$Item, [string]$FirstPrefix, [string]$NextPrefix)
 
     $out = New-Object System.Collections.Generic.List[string]
+    $item = Normalize-Space $Item
 
-    $body = $Sql -replace '^WITH\s+', ''
+    if ($item -notmatch '^\s*CASE\b') {
+        $out.Add($FirstPrefix + $item)
+        return $out
+    }
+
+    $alias = ""
+    $caseBody = $item
+
+    $aliasMatch = [regex]::Match($item, '\bEND\s+AS\s+([A-Z0-9_]+)\s*$', 'IgnoreCase')
+    if ($aliasMatch.Success) {
+        $alias = " AS " + $aliasMatch.Groups[1].Value
+        $caseBody = $item.Substring(0, $aliasMatch.Index + 3).Trim()
+    }
+
+    $out.Add($FirstPrefix + "CASE")
+
+    $work = $caseBody -replace '^\s*CASE\s+', ''
+    $work = $work -replace '\s*END\s*$', ''
+
+    $tokens = [regex]::Matches($work, '\bWHEN\b|\bELSE\b', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if ($tokens.Count -eq 0) {
+        $out[$out.Count - 1] = $FirstPrefix + $item
+        return $out
+    }
+
+    for ($i = 0; $i -lt $tokens.Count; $i++) {
+        $t = $tokens[$i]
+        $next = if ($i -lt $tokens.Count - 1) { $tokens[$i + 1].Index } else { $work.Length }
+        $segment = Normalize-Space $work.Substring($t.Index, $next - $t.Index)
+        $out.Add($NextPrefix + "  " + $segment)
+    }
+
+    $out.Add($NextPrefix + "END" + $alias)
+    return $out
+}
+
+function Format-WindowExpression {
+    param([string]$Item, [string]$FirstPrefix, [string]$NextPrefix)
+
+    $out = New-Object System.Collections.Generic.List[string]
+    $item = Normalize-Space $Item
+
+    if ($item.Length -le 120 -or $item -notmatch '\bOVER\s*\(') {
+        $out.Add($FirstPrefix + $item)
+        return $out
+    }
+
+    $m = [regex]::Match($item, '^(.*?)\s+OVER\s*\((.*)\)(\s+AS\s+[A-Z0-9_]+)?$', 'IgnoreCase')
+    if (-not $m.Success) {
+        $out.Add($FirstPrefix + $item)
+        return $out
+    }
+
+    $func = Normalize-Space $m.Groups[1].Value
+    $inside = Normalize-Space $m.Groups[2].Value
+    $alias = $m.Groups[3].Value
+
+    $partitionMatch = [regex]::Match($inside, '^(PARTITION\s+BY\s+.*?)(\s+ORDER\s+BY\s+.*)?$', 'IgnoreCase')
+
+    $out.Add($FirstPrefix + $func)
+    if ($partitionMatch.Success) {
+        $out.Add($NextPrefix + "      OVER (" + (Normalize-Space $partitionMatch.Groups[1].Value))
+        if (-not [string]::IsNullOrWhiteSpace($partitionMatch.Groups[2].Value)) {
+            $orderText = Normalize-Space $partitionMatch.Groups[2].Value
+            $out.Add($NextPrefix + "              " + $orderText + ")" + $alias)
+        }
+        else {
+            $out.Add($NextPrefix + "      )" + $alias)
+        }
+    }
+    else {
+        $out.Add($NextPrefix + "      OVER (" + $inside + ")" + $alias)
+    }
+
+    return $out
+}
+
+function Format-SelectList {
+    param([string]$Text, [int]$Indent)
+
+    $out = New-Object System.Collections.Generic.List[string]
+    $items = @(Split-TopLevelByComma $Text)
+    $firstPrefix = (' ' * $Indent) + "SELECT "
+    $nextPrefix = (' ' * $Indent) + "       "
+
+    for ($i = 0; $i -lt $items.Count; $i++) {
+        $suffix = if ($i -lt $items.Count - 1) { "," } else { "" }
+        $prefix = if ($i -eq 0) { $firstPrefix } else { $nextPrefix }
+        $item = $items[$i]
+
+        if ($item -match '^\s*CASE\b') {
+            $caseLines = @(Format-CaseExpression -Item $item -FirstPrefix $prefix -NextPrefix $nextPrefix)
+            for ($j = 0; $j -lt $caseLines.Count; $j++) {
+                if ($j -eq $caseLines.Count - 1) {
+                    $out.Add($caseLines[$j] + $suffix)
+                }
+                else {
+                    $out.Add($caseLines[$j])
+                }
+            }
+        }
+        elseif ($item -match '\bOVER\s*\(' -and $item.Length -gt 120) {
+            $winLines = @(Format-WindowExpression -Item $item -FirstPrefix $prefix -NextPrefix $nextPrefix)
+            for ($j = 0; $j -lt $winLines.Count; $j++) {
+                if ($j -eq $winLines.Count - 1) {
+                    $out.Add($winLines[$j] + $suffix)
+                }
+                else {
+                    $out.Add($winLines[$j])
+                }
+            }
+        }
+        else {
+            $out.Add($prefix + $item + $suffix)
+        }
+    }
+
+    return $out
+}
+
+function Has-TopLevelSetOperator {
+    param([string]$Sql)
+
+    return (Get-TopLevelMatches -Text $Sql -Pattern '\b(UNION\s+ALL|UNION|EXCEPT|INTERSECT)\b').Count -gt 0
+}
+
+function Format-SetQuery {
+    param([string]$Sql, [int]$Indent = 0, [switch]$NoSemicolon)
+
+    $out = New-Object System.Collections.Generic.List[string]
+    $matches = @(Get-TopLevelMatches -Text $Sql -Pattern '\b(UNION\s+ALL|UNION|EXCEPT|INTERSECT)\b')
+    $start = 0
+
+    for ($i = 0; $i -lt $matches.Count; $i++) {
+        $m = $matches[$i]
+        $part = $Sql.Substring($start, $m.Index - $start).Trim()
+
+        if ($part.Length -gt 0) {
+            Add-IndentedLines -Out $out -Lines @(Format-SqlStatement -Statement $part -Indent $Indent -NoSemicolon) -Indent 0
+        }
+
+        $out.Add((' ' * $Indent) + $m.Value.ToUpperInvariant())
+        $start = $m.Index + $m.Length
+    }
+
+    $tail = $Sql.Substring($start).Trim()
+    if ($tail.Length -gt 0) {
+        Add-IndentedLines -Out $out -Lines @(Format-SqlStatement -Statement $tail -Indent $Indent -NoSemicolon:$NoSemicolon) -Indent 0
+    }
+
+    return $out
+}
+
+function Get-SelectClauses {
+    param([string]$Sql)
+
+    $clausePattern = '\bFROM\b|\bWHERE\b|\bGROUP\s+BY\b|\bHAVING\b|\bORDER\s+BY\b|\bFETCH\s+FIRST\b|\bLIMIT\b|\bOPTIMIZE\s+FOR\b|\bFOR\s+UPDATE\b|\bWITH\s+(UR|RS|CS|RR|NC)\b'
+    $matches = @(Get-TopLevelMatches -Text $Sql -Pattern $clausePattern)
+    $clauses = New-Object System.Collections.Generic.List[object]
+
+    for ($i = 0; $i -lt $matches.Count; $i++) {
+        $m = $matches[$i]
+        $nextIndex = if ($i -lt $matches.Count - 1) { $matches[$i + 1].Index } else { $Sql.Length }
+
+        $clauses.Add([pscustomobject]@{
+            Name = $m.Value.ToUpperInvariant()
+            Index = $m.Index
+            Length = $m.Length
+            Text = $Sql.Substring($m.Index + $m.Length, $nextIndex - ($m.Index + $m.Length)).Trim()
+        })
+    }
+
+    return $clauses
+}
+
+function Format-FromClause {
+    param([string]$Text, [int]$Indent)
+
+    $out = New-Object System.Collections.Generic.List[string]
+    $prefix = ' ' * $Indent
+    $joinPattern = '\b(INNER\s+JOIN|LEFT\s+JOIN|LEFT\s+OUTER\s+JOIN|RIGHT\s+JOIN|RIGHT\s+OUTER\s+JOIN|FULL\s+JOIN|FULL\s+OUTER\s+JOIN|CROSS\s+JOIN|JOIN)\b'
+    $matches = @(Get-TopLevelMatches -Text $Text -Pattern $joinPattern)
+
+    if ($matches.Count -eq 0) {
+        $out.Add($prefix + "  FROM " + (Normalize-Space $Text))
+        return $out
+    }
+
+    $first = $Text.Substring(0, $matches[0].Index).Trim()
+    $out.Add($prefix + "  FROM " + (Normalize-Space $first))
+
+    for ($i = 0; $i -lt $matches.Count; $i++) {
+        $m = $matches[$i]
+        $next = if ($i -lt $matches.Count - 1) { $matches[$i + 1].Index } else { $Text.Length }
+        $joinText = Normalize-Space $Text.Substring($m.Index, $next - $m.Index)
+        $out.Add($prefix + " " + $joinText)
+    }
+
+    return $out
+}
+
+function Format-WhereClause {
+    param([string]$Text, [string]$Keyword, [int]$Indent)
+
+    $out = New-Object System.Collections.Generic.List[string]
+    $prefix = ' ' * $Indent
+    $parts = @(Split-TopLevelLogical $Text)
+
+    for ($i = 0; $i -lt $parts.Count; $i++) {
+        $part = Normalize-Space $parts[$i]
+
+        if ($i -eq 0) {
+            $out.Add($prefix + $Keyword + " " + $part)
+        }
+        elseif ($part -match '^(AND|OR)\b') {
+            $out.Add($prefix + "   " + $part)
+        }
+        else {
+            $out.Add($prefix + "   AND " + $part)
+        }
+    }
+
+    return $out
+}
+
+function Format-SelectStatement {
+    param([string]$Sql, [int]$Indent = 0, [switch]$NoSemicolon)
+
+    $Sql = Normalize-Space (Strip-TrailingSemicolon $Sql)
+
+    if (Has-TopLevelSetOperator $Sql) {
+        return Format-SetQuery -Sql $Sql -Indent $Indent -NoSemicolon:$NoSemicolon
+    }
+
+    $out = New-Object System.Collections.Generic.List[string]
+    $prefix = ' ' * $Indent
+
+    if ($Sql -notmatch '^\s*SELECT\b') {
+        $out.Add($prefix + $Sql)
+        return $out
+    }
+
+    $clauses = @(Get-SelectClauses $Sql)
+
+    if ($clauses.Count -eq 0) {
+        $selectList = $Sql -replace '^\s*SELECT\s+', ''
+        Add-IndentedLines -Out $out -Lines @(Format-SelectList -Text $selectList -Indent $Indent) -Indent 0
+        return $out
+    }
+
+    $firstClause = $clauses[0]
+    $selectList = $Sql.Substring(6, $firstClause.Index - 6).Trim()
+
+    Add-IndentedLines -Out $out -Lines @(Format-SelectList -Text $selectList -Indent $Indent) -Indent 0
+
+    foreach ($clause in $clauses) {
+        $name = $clause.Name
+        $text = $clause.Text
+
+        if ($name -eq 'FROM') {
+            Add-IndentedLines -Out $out -Lines @(Format-FromClause -Text $text -Indent $Indent) -Indent 0
+        }
+        elseif ($name -eq 'WHERE') {
+            Add-IndentedLines -Out $out -Lines @(Format-WhereClause -Text $text -Keyword " WHERE" -Indent $Indent) -Indent 0
+        }
+        elseif ($name -eq 'GROUP BY') {
+            $out.Add($prefix + " GROUP BY " + (Normalize-Space $text))
+        }
+        elseif ($name -eq 'HAVING') {
+            $out.Add($prefix + "HAVING " + (Normalize-Space $text))
+        }
+        elseif ($name -eq 'ORDER BY') {
+            $out.Add($prefix + " ORDER BY " + (Normalize-Space $text))
+        }
+        elseif ($name -eq 'FETCH FIRST') {
+            $out.Add($prefix + " FETCH FIRST " + (Normalize-Space $text))
+        }
+        elseif ($name -eq 'OPTIMIZE FOR') {
+            $out.Add($prefix + " OPTIMIZE FOR " + (Normalize-Space $text))
+        }
+        elseif ($name -eq 'FOR UPDATE') {
+            $out.Add($prefix + " FOR UPDATE " + (Normalize-Space $text))
+        }
+        elseif ($name -match '^WITH\s+') {
+            $out.Add($prefix + "  " + $name)
+        }
+        else {
+            $out.Add($prefix + $name + " " + (Normalize-Space $text))
+        }
+    }
+
+    return $out
+}
+
+function Format-WithStatement {
+    param([string]$Sql, [int]$Indent = 0, [switch]$NoSemicolon)
+
+    $Sql = Normalize-Space (Strip-TrailingSemicolon $Sql)
+    $prefix = ' ' * $Indent
+    $out = New-Object System.Collections.Generic.List[string]
+
+    $body = $Sql -replace '^\s*WITH\s+', ''
     $pos = 0
     $cteIndex = 0
 
     while ($pos -lt $body.Length) {
-        $m = [regex]::Match($body.Substring($pos), '^\s*([A-Z0-9_]+)\s+AS\s*\(', 'IgnoreCase')
+        $remaining = $body.Substring($pos)
 
-        if (-not $m.Success) {
-            break
-        }
+        $m = [regex]::Match(
+            $remaining,
+            '^\s*([A-Z0-9_]+(?:\s*\([^)]*\))?)\s+AS\s*\(',
+            [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+        )
 
-        $cteName = $m.Groups[1].Value
-        $openPos = $pos + $m.Index + $m.Length - 1
+        if (-not $m.Success) { break }
 
-        $depth = 0
-        $closePos = -1
+        $cteName = Normalize-Space $m.Groups[1].Value
+        $openIndex = $pos + $m.Index + $m.Length - 1
+        $closeIndex = Find-MatchingParen -Text $body -OpenIndex $openIndex
+        if ($closeIndex -lt 0) { break }
 
-        for ($i = $openPos; $i -lt $body.Length; $i++) {
-            if ($body[$i] -eq '(') {
-                $depth++
-            }
-            elseif ($body[$i] -eq ')') {
-                $depth--
-                if ($depth -eq 0) {
-                    $closePos = $i
-                    break
-                }
-            }
-        }
-
-        if ($closePos -lt 0) {
-            break
-        }
-
-        $innerSql = $body.Substring($openPos + 1, $closePos - $openPos - 1).Trim()
+        $inner = $body.Substring($openIndex + 1, $closeIndex - $openIndex - 1).Trim()
+        $innerLines = @(Format-SqlStatement -Statement $inner -Indent ($Indent + 5) -NoSemicolon)
 
         if ($cteIndex -eq 0) {
-            $prefix = "WITH $cteName AS ( "
+            $out.Add($prefix + "WITH " + $cteName)
         }
         else {
-            $prefix = "     $cteName AS ( "
+            $out.Add($prefix + "   , " + $cteName)
         }
 
-        $innerLines = Format-SelectStatement -Sql $innerSql -OpeningPrefix $prefix
-
-        foreach ($line in $innerLines) {
-            $out.Add($line)
-        }
-
-        $next = $closePos + 1
-        while ($next -lt $body.Length -and [char]::IsWhiteSpace($body[$next])) {
-            $next++
-        }
-
-        if ($next -lt $body.Length -and $body[$next] -eq ',') {
-            $out[$out.Count - 1] = $out[$out.Count - 1] + ' ),'
-            $pos = $next + 1
-            $cteIndex++
+        if ($innerLines.Count -gt 0) {
+            $out.Add($prefix + "  AS ( " + $innerLines[0].Trim())
+            for ($i = 1; $i -lt $innerLines.Count; $i++) {
+                $out.Add($innerLines[$i])
+            }
         }
         else {
-            $out[$out.Count - 1] = $out[$out.Count - 1] + ' )'
-            $pos = $next
+            $out.Add($prefix + "  AS (")
+        }
+
+        $pos = $closeIndex + 1
+        while ($pos -lt $body.Length -and [char]::IsWhiteSpace($body[$pos])) { $pos++ }
+
+        if ($pos -lt $body.Length -and $body[$pos] -eq ',') {
+            $out.Add($prefix + "     ),")
+            $pos++
+        }
+        else {
+            $out.Add($prefix + "     )")
             break
         }
+
+        $cteIndex++
     }
 
     $rest = $body.Substring($pos).Trim()
 
+    if ($out.Count -eq 0) {
+        $out.Add($prefix + $Sql)
+        return $out
+    }
+
     if ($rest.Length -gt 0) {
-        foreach ($line in (Format-CompoundSelectStatement -Sql $rest -OpeningPrefix "")) {
-            $out.Add($line)
-        }
+        Add-IndentedLines -Out $out -Lines @(Format-SqlStatement -Statement $rest -Indent $Indent -NoSemicolon) -Indent 0
     }
 
     return $out
 }
-
-# ======================================================================
-# INSERT formatter
-# ======================================================================
 
 function Format-InsertStatement {
-    param([string]$Sql)
+    param([string]$Sql, [int]$Indent = 0, [switch]$NoSemicolon)
 
-    $Sql = Normalize-SqlWhitespace $Sql
-    $Sql = Convert-SqlKeywordsToUpper $Sql
-
+    $Sql = Normalize-Space (Strip-TrailingSemicolon $Sql)
+    $prefix = ' ' * $Indent
     $out = New-Object System.Collections.Generic.List[string]
+    $selectMatch = Get-FirstTopLevelMatch -Text $Sql -Pattern '\bSELECT\b'
+    $valuesMatch = Get-FirstTopLevelMatch -Text $Sql -Pattern '\bVALUES\b'
 
-    if ($Sql.Length -le $script:MaxLineLength) {
-        $out.Add($Sql)
-        return $out
-    }
+    if ($null -ne $selectMatch) {
+        $head = $Sql.Substring(0, $selectMatch.Index).Trim()
+        $select = $Sql.Substring($selectMatch.Index).Trim()
+        $open = $head.IndexOf('(')
+        $close = if ($open -ge 0) { Find-MatchingParen -Text $head -OpenIndex $open } else { -1 }
 
-    # --------------------------------------------------------------
-    # INSERT INTO ... (columns) SELECT ...
-    # --------------------------------------------------------------
-    # This handles procedure/reporting patterns like:
-    #
-    #   INSERT INTO TARGET (COL1, COL2)
-    #   SELECT ...
-    #     FROM ...
-    #
-    # The INSERT column list is formatted here, then the SELECT portion
-    # is delegated to the unified SELECT formatter.
-    # --------------------------------------------------------------
-
-    $insertSelectMatch = [regex]::Match(
-        $Sql,
-        '^INSERT\s+INTO\s+(.+?)\s*\((.+?)\)\s+(SELECT\b.+)$',
-        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-    )
-
-    if ($insertSelectMatch.Success) {
-        $target     = $insertSelectMatch.Groups[1].Value.Trim()
-        $columnText = $insertSelectMatch.Groups[2].Value.Trim()
-        $selectSql  = $insertSelectMatch.Groups[3].Value.Trim()
-
-        $columns = @(Split-TopLevelComma $columnText)
-        $insertPrefix = 'INSERT INTO ' + $target + ' ( '
-
-        for ($i = 0; $i -lt $columns.Count; $i++) {
-            $suffix = if ($i -lt $columns.Count - 1) { ',' } else { ' )' }
-
-            if ($i -eq 0) {
-                $out.Add($insertPrefix + $columns[$i] + $suffix)
-            }
-            else {
-                $out.Add((' ' * $insertPrefix.Length) + $columns[$i] + $suffix)
-            }
-        }
-
-        foreach ($line in (Format-SelectStatement -Sql $selectSql -OpeningPrefix "")) {
-            $out.Add($line)
-        }
-
-        return $out
-    }
-
-    $m = [regex]::Match(
-        $Sql,
-        '^INSERT\s+INTO\s+(.+?)\s*\((.+?)\)\s+VALUES\s*\((.+?)\)\s*(WITH\s+(UR|NC))?$',
-        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-    )
-
-    if (-not $m.Success) {
-        $out.Add($Sql)
-        return $out
-    }
-
-    $target = $m.Groups[1].Value.Trim()
-    $cols = @(Split-TopLevelComma $m.Groups[2].Value.Trim())
-    $vals = @(Split-TopLevelComma $m.Groups[3].Value.Trim())
-    $iso = $m.Groups[4].Value.Trim()
-
-    $insertPrefix = 'INSERT INTO ' + $target + ' ( '
-
-    for ($i = 0; $i -lt $cols.Count; $i++) {
-        $suffix = if ($i -lt $cols.Count - 1) { ',' } else { ' )' }
-
-        if ($i -eq 0) {
-            $out.Add($insertPrefix + $cols[$i] + $suffix)
+        if ($open -ge 0 -and $close -gt $open) {
+            $before = Normalize-Space $head.Substring(0, $open)
+            $cols = $head.Substring($open + 1, $close - $open - 1)
+            $out.Add($prefix + $before + " (")
+            Add-IndentedLines -Out $out -Lines @(Format-CommaList -Text $cols -FirstPrefix ($prefix + "    ") -NextPrefix ($prefix + "    ")) -Indent 0
+            $out.Add($prefix + ")")
         }
         else {
-            $out.Add((' ' * $insertPrefix.Length) + $cols[$i] + $suffix)
+            $out.Add($prefix + $head)
         }
+
+        Add-IndentedLines -Out $out -Lines @(Format-SqlStatement -Statement $select -Indent $Indent -NoSemicolon) -Indent 0
+        return $out
     }
 
-    for ($i = 0; $i -lt $vals.Count; $i++) {
-        $suffix = if ($i -lt $vals.Count - 1) { ',' } else { ' )' }
+    if ($null -ne $valuesMatch) {
+        $head = $Sql.Substring(0, $valuesMatch.Index).Trim()
+        $values = $Sql.Substring($valuesMatch.Index + $valuesMatch.Length).Trim()
+        $open = $head.IndexOf('(')
+        $close = if ($open -ge 0) { Find-MatchingParen -Text $head -OpenIndex $open } else { -1 }
 
-        if ($i -eq 0) {
-            $out.Add('VALUES ( ' + $vals[$i] + $suffix)
+        if ($open -ge 0 -and $close -gt $open) {
+            $before = Normalize-Space $head.Substring(0, $open)
+            $cols = $head.Substring($open + 1, $close - $open - 1)
+            $out.Add($prefix + $before + " (")
+            Add-IndentedLines -Out $out -Lines @(Format-CommaList -Text $cols -FirstPrefix ($prefix + "    ") -NextPrefix ($prefix + "    ")) -Indent 0
+            $out.Add($prefix + ")")
         }
         else {
-            $out.Add('         ' + $vals[$i] + $suffix)
+            $out.Add($prefix + $head)
         }
+
+        if ($values.StartsWith("(")) {
+            $end = Find-MatchingParen -Text $values -OpenIndex 0
+            if ($end -gt 0) {
+                $valText = $values.Substring(1, $end - 1)
+                $out.Add($prefix + "VALUES (")
+                Add-IndentedLines -Out $out -Lines @(Format-CommaList -Text $valText -FirstPrefix ($prefix + "    ") -NextPrefix ($prefix + "    ")) -Indent 0
+                $out.Add($prefix + ")")
+                return $out
+            }
+        }
+
+        $out.Add($prefix + "VALUES " + $values)
+        return $out
     }
 
-    if ($iso.Length -gt 0) {
-        $out.Add('  ' + $iso)
-    }
-
+    $out.Add($prefix + $Sql)
     return $out
 }
-
-# ======================================================================
-# UPDATE formatter
-# ======================================================================
 
 function Format-UpdateStatement {
-    param([string]$Sql)
+    param([string]$Sql, [int]$Indent = 0)
 
-    $Sql = Normalize-SqlWhitespace $Sql
-    $Sql = Convert-SqlKeywordsToUpper $Sql
-
+    $Sql = Normalize-Space (Strip-TrailingSemicolon $Sql)
+    $prefix = ' ' * $Indent
     $out = New-Object System.Collections.Generic.List[string]
+    $setMatch = Get-FirstTopLevelMatch -Text $Sql -Pattern '\bSET\b'
 
-    $m = [regex]::Match(
-        $Sql,
-        '^UPDATE\s+(.+?)\s+SET\s+(.+?)\s+WHERE\s+(.+?)(\s+WITH\s+(UR|NC))?$',
-        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-    )
-
-    if (-not $m.Success) {
-        $out.Add($Sql)
+    if ($null -eq $setMatch) {
+        $out.Add($prefix + $Sql)
         return $out
     }
 
-    $target = $m.Groups[1].Value.Trim()
-    $setText = $m.Groups[2].Value.Trim()
-    $whereText = $m.Groups[3].Value.Trim()
-    $iso = $m.Groups[4].Value.Trim()
+    $whereMatch = Get-FirstTopLevelMatch -Text $Sql -Pattern '\bWHERE\b'
+    $head = Normalize-Space $Sql.Substring(0, $setMatch.Index)
+    $setEnd = if ($null -ne $whereMatch) { $whereMatch.Index } else { $Sql.Length }
+    $setText = $Sql.Substring($setMatch.Index + $setMatch.Length, $setEnd - ($setMatch.Index + $setMatch.Length)).Trim()
+    $whereText = if ($null -ne $whereMatch) { $Sql.Substring($whereMatch.Index + $whereMatch.Length).Trim() } else { "" }
 
-    $out.Add('UPDATE ' + $target)
+    $out.Add($prefix + $head)
+    Add-IndentedLines -Out $out -Lines @(Format-CommaList -Text $setText -FirstPrefix ($prefix + "   SET ") -NextPrefix ($prefix + "       ")) -Indent 0
 
-    $assignments = @(Split-TopLevelComma $setText)
-
-    for ($i = 0; $i -lt $assignments.Count; $i++) {
-        $suffix = if ($i -lt $assignments.Count - 1) { ',' } else { '' }
-
-        if ($i -eq 0) {
-            $out.Add('   SET ' + $assignments[$i].Trim() + $suffix)
-        }
-        else {
-            $out.Add('       ' + $assignments[$i].Trim() + $suffix)
-        }
-    }
-
-    foreach ($line in (Format-PredicateLines -OpeningPrefix "" -Keyword 'WHERE' -Predicate $whereText)) {
-        $out.Add($line)
-    }
-
-    if ($iso.Length -gt 0) {
-        $out.Add('  ' + $iso.Trim())
+    if ($whereText.Length -gt 0) {
+        Add-IndentedLines -Out $out -Lines @(Format-WhereClause -Text $whereText -Keyword " WHERE" -Indent $Indent) -Indent 0
     }
 
     return $out
 }
 
-# ======================================================================
-# MERGE formatter
-# ======================================================================
-# MERGE still has special statement-level structure, but its source SELECT
-# is now formatted by the same Format-SelectStatement function.
-# ======================================================================
+function Format-DeleteStatement {
+    param([string]$Sql, [int]$Indent = 0)
+
+    $Sql = Normalize-Space (Strip-TrailingSemicolon $Sql)
+    $prefix = ' ' * $Indent
+    $out = New-Object System.Collections.Generic.List[string]
+    $whereMatch = Get-FirstTopLevelMatch -Text $Sql -Pattern '\bWHERE\b'
+
+    if ($null -eq $whereMatch) {
+        $out.Add($prefix + $Sql)
+        return $out
+    }
+
+    $head = Normalize-Space $Sql.Substring(0, $whereMatch.Index)
+    $where = $Sql.Substring($whereMatch.Index + $whereMatch.Length).Trim()
+
+    $out.Add($prefix + $head)
+    Add-IndentedLines -Out $out -Lines @(Format-WhereClause -Text $where -Keyword " WHERE" -Indent $Indent) -Indent 0
+    return $out
+}
+
+
+function Format-InlineParenCommaList {
+    param(
+        [string]$Keyword,
+        [string]$Text,
+        [string]$Prefix
+    )
+
+    $out = New-Object System.Collections.Generic.List[string]
+    $items = @(Split-TopLevelByComma $Text)
+
+    if ($items.Count -eq 0) {
+        $out.Add($Prefix + $Keyword + "()")
+        return $out
+    }
+
+    $continuation = ' ' * ($Keyword.Length + 1)
+
+    for ($i = 0; $i -lt $items.Count; $i++) {
+        $suffix = if ($i -lt $items.Count - 1) { "," } else { ")" }
+
+        if ($i -eq 0) {
+            $out.Add($Prefix + $Keyword + "(" + $items[$i] + $suffix)
+        }
+        else {
+            $out.Add($Prefix + $continuation + $items[$i] + $suffix)
+        }
+    }
+
+    return $out
+}
 
 function Format-MergeStatement {
-    param([string]$Sql)
+    param([string]$Sql, [int]$Indent = 0)
 
-    $Sql = Normalize-SqlWhitespace $Sql
-    $Sql = Convert-SqlKeywordsToUpper $Sql
-
+    $Sql = Normalize-Space (Strip-TrailingSemicolon $Sql)
+    $prefix = ' ' * $Indent
     $out = New-Object System.Collections.Generic.List[string]
 
-    $m = [regex]::Match(
-        $Sql,
-        '^MERGE\s+INTO\s+(.+?)\s+USING\s*\((.+)\)\s+([A-Z0-9_]+)\s+ON\s*\((.+?)\)\s+WHEN\s+MATCHED\s+AND\s*\((.+?)\)\s+THEN\s+UPDATE\s+SET\s+(.+?)\s+WHEN\s+NOT\s+MATCHED\s+THEN\s+INSERT\s*\((.+?)\)\s+VALUES\s*\((.+?)\)\s*(WITH\s+(UR|NC))?$',
-        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-    )
+    $usingMatch = Get-FirstTopLevelMatch -Text $Sql -Pattern '\bUSING\b'
+    $onMatch = Get-FirstTopLevelMatch -Text $Sql -Pattern '\bON\b'
+    $whenMatches = @(Get-TopLevelMatches -Text $Sql -Pattern '\bWHEN\s+(MATCHED|NOT\s+MATCHED)\s+THEN\b')
 
-    if (-not $m.Success) {
-        $out.Add($Sql)
+    if ($null -eq $usingMatch -or $null -eq $onMatch) {
+        $out.Add($prefix + $Sql)
         return $out
     }
 
-    $target = $m.Groups[1].Value.Trim()
-    $sourceSql = $m.Groups[2].Value.Trim()
-    $sourceAlias = $m.Groups[3].Value.Trim()
-    $onCond = $m.Groups[4].Value.Trim()
-    $matchCond = $m.Groups[5].Value.Trim()
-    $setText = $m.Groups[6].Value.Trim()
-    $insertText = $m.Groups[7].Value.Trim()
-    $valuesText = $m.Groups[8].Value.Trim()
-    $iso = $m.Groups[9].Value.Trim()
+    $out.Add($prefix + " MERGE " + (Normalize-Space (($Sql.Substring(0, $usingMatch.Index)) -replace '^\s*MERGE\s+', '')))
 
-    $out.Add(' MERGE INTO ' + $target)
+    $usingBody = $Sql.Substring($usingMatch.Index + $usingMatch.Length, $onMatch.Index - ($usingMatch.Index + $usingMatch.Length)).Trim()
 
-    $sourceLines = Format-SelectStatement -Sql $sourceSql -OpeningPrefix ' USING ( '
+    if ($usingBody.StartsWith("(")) {
+        $close = Find-MatchingParen -Text $usingBody -OpenIndex 0
+        if ($close -gt 0) {
+            $inner = $usingBody.Substring(1, $close - 1).Trim()
+            $alias = Normalize-Space $usingBody.Substring($close + 1)
+            $innerLines = @(Format-SqlStatement -Statement $inner -Indent ($Indent + 7) -NoSemicolon)
 
-    foreach ($line in $sourceLines) {
-        $out.Add($line)
-    }
-
-    $onInline = ' ) ' + $sourceAlias + ' ON (' + $onCond + ')'
-
-    if (($out[$out.Count - 1].Length + $onInline.Length) -le $script:MaxLineLength) {
-        $out[$out.Count - 1] = $out[$out.Count - 1] + $onInline
+            $out.Add($prefix + " USING ( " + $innerLines[0].Trim())
+            for ($i = 1; $i -lt $innerLines.Count; $i++) {
+                $out.Add($innerLines[$i])
+            }
+            $out.Add($prefix + "       ) " + $alias)
+        }
+        else {
+            $out.Add($prefix + " USING " + $usingBody)
+        }
     }
     else {
-        $out[$out.Count - 1] = $out[$out.Count - 1] + ' ) ' + $sourceAlias
+        $out.Add($prefix + " USING " + $usingBody)
+    }
 
-        $onLine = '        ON (' + $onCond + ')'
-        if ($onLine.Length -le $script:MaxLineLength) {
-            $out.Add($onLine)
+    $onEnd = if ($whenMatches.Count -gt 0) { $whenMatches[0].Index } else { $Sql.Length }
+    $onText = Normalize-Space $Sql.Substring($onMatch.Index + $onMatch.Length, $onEnd - ($onMatch.Index + $onMatch.Length))
+    $out.Add($prefix + "    ON " + $onText)
+
+    for ($i = 0; $i -lt $whenMatches.Count; $i++) {
+        $m = $whenMatches[$i]
+        $next = if ($i -lt $whenMatches.Count - 1) { $whenMatches[$i + 1].Index } else { $Sql.Length }
+        $whenText = Normalize-Space $Sql.Substring($m.Index, $next - $m.Index)
+
+        $updateSet = [regex]::Match($whenText, '^(WHEN\s+MATCHED\s+THEN)\s+UPDATE\s+SET\s+(.+)$', 'IgnoreCase')
+        $insertVals = [regex]::Match($whenText, '^(WHEN\s+NOT\s+MATCHED\s+THEN)\s+INSERT\s*\((.+?)\)\s+VALUES\s*\((.+)\)$', 'IgnoreCase')
+
+        if ($updateSet.Success) {
+            $out.Add($prefix + "  WHEN MATCHED THEN")
+            Add-IndentedLines -Out $out -Lines @(Format-CommaList -Text $updateSet.Groups[2].Value -FirstPrefix ($prefix + "UPDATE SET ") -NextPrefix ($prefix + "       SET ")) -Indent 0
+        }
+        elseif ($insertVals.Success) {
+            $out.Add($prefix + "  WHEN NOT MATCHED THEN")
+
+            Add-IndentedLines -Out $out -Lines @(
+                Format-InlineParenCommaList -Keyword "INSERT " -Text $insertVals.Groups[2].Value -Prefix $prefix
+            ) -Indent 0
+
+            Add-IndentedLines -Out $out -Lines @(
+                Format-InlineParenCommaList -Keyword "VALUES " -Text $insertVals.Groups[3].Value -Prefix $prefix
+            ) -Indent 0
         }
         else {
-            $parts = @(Split-TopLevelLogical $onCond)
-            for ($i = 0; $i -lt $parts.Count; $i++) {
-                if ($i -eq 0) {
-                    $out.Add('        ON (' + $parts[$i].Text)
-                }
-                elseif ($parts[$i].Connector -eq 'AND') {
-                    $out.Add('       AND ' + $parts[$i].Text)
-                }
-                elseif ($parts[$i].Connector -eq 'OR') {
-                    $out.Add('        OR ' + $parts[$i].Text)
-                }
-            }
-            $out[$out.Count - 1] = $out[$out.Count - 1] + ')'
+            $out.Add($prefix + "  " + $whenText)
         }
-    }
-
-    $matchPrefix = '  WHEN MATCHED AND ( '
-
-    if (($matchPrefix.Length + $matchCond.Length + ' ) THEN'.Length) -le $script:MaxLineLength) {
-        $out.Add($matchPrefix + $matchCond + ' ) THEN')
-    }
-    else {
-        $parts = @(Split-TopLevelLogical $matchCond)
-
-        for ($i = 0; $i -lt $parts.Count; $i++) {
-            if ($i -eq 0) {
-                $out.Add('  WHEN MATCHED AND (    ' + $parts[$i].Text)
-            }
-            elseif ($parts[$i].Connector -eq 'OR') {
-                $out.Add('                     OR ' + $parts[$i].Text)
-            }
-            elseif ($parts[$i].Connector -eq 'AND') {
-                $out.Add('                    AND ' + $parts[$i].Text)
-            }
-        }
-
-        $out[$out.Count - 1] = $out[$out.Count - 1] + ' ) THEN'
-    }
-
-    $out.Add('UPDATE ')
-
-    $assignments = @(Split-TopLevelComma $setText)
-    for ($i = 0; $i -lt $assignments.Count; $i++) {
-        $suffix = if ($i -lt $assignments.Count - 1) { ',' } else { '' }
-
-        if ($i -eq 0) {
-            $out.Add('   SET ' + $assignments[$i] + $suffix)
-        }
-        else {
-            $out.Add('       ' + $assignments[$i] + $suffix)
-        }
-    }
-
-    $out.Add('  WHEN NOT MATCHED THEN')
-
-    $insertCols = @(Split-TopLevelComma $insertText)
-    for ($i = 0; $i -lt $insertCols.Count; $i++) {
-        $suffix = if ($i -lt $insertCols.Count - 1) { ',' } else { ' )' }
-
-        if ($i -eq 0) {
-            $out.Add('INSERT ( ' + $insertCols[$i] + $suffix)
-        }
-        else {
-            $out.Add('         ' + $insertCols[$i] + $suffix)
-        }
-    }
-
-    $values = @(Split-TopLevelComma $valuesText)
-    for ($i = 0; $i -lt $values.Count; $i++) {
-        $suffix = if ($i -lt $values.Count - 1) { ',' } else { ' )' }
-
-        if ($i -eq 0) {
-            $out.Add('VALUES ( ' + $values[$i] + $suffix)
-        }
-        else {
-            $out.Add('         ' + $values[$i] + $suffix)
-        }
-    }
-
-    if ($iso.Length -gt 0) {
-        $out.Add('  ' + $iso)
     }
 
     return $out
 }
 
-# ======================================================================
-# Safe wrapping
-# ======================================================================
-# This layer only handles patterns we understand safely. It avoids breaking
-# arbitrary SQL expressions incorrectly.
-# ======================================================================
+function Format-CreateTableStatement {
+    param([string]$Sql, [int]$Indent = 0)
 
-function Apply-SafeLineWrapping {
-    param([System.Collections.Generic.List[string]]$Lines)
-
+    $Sql = Normalize-Space (Strip-TrailingSemicolon $Sql)
+    $prefix = ' ' * $Indent
     $out = New-Object System.Collections.Generic.List[string]
+    $open = $Sql.IndexOf('(')
 
-    foreach ($line in $Lines) {
-        if ($line.Length -le $script:MaxLineLength) {
-            $out.Add($line)
-            continue
-        }
-
-        $m = [regex]::Match(
-            $line,
-            '^(\s*)ROW_NUMBER\s*\(\s*\)\s+OVER\s*\(PARTITION\s+BY\s+(.+?)\s+ORDER\s+BY\s+(.+?)\)\s+AS\s+(.+)$',
-            [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-        )
-
-        if ($m.Success) {
-            $indent = $m.Groups[1].Value
-            $out.Add($indent + 'ROW_NUMBER ()')
-            $out.Add($indent + '      OVER (PARTITION BY ' + $m.Groups[2].Value.Trim())
-            $out.Add($indent + '                ORDER BY ' + $m.Groups[3].Value.Trim() + ') AS ' + $m.Groups[4].Value.Trim())
-            continue
-        }
-
-        $out.Add($line)
-    }
-
-    return $out
-}
-
-
-# ======================================================================
-# PROCEDURE formatter
-# ======================================================================
-# Simple procedure rule:
-#   - Header / BEGIN / END stay at column 1.
-#   - Everything inside BEGIN / END is just the normal SQL formatter output
-#     shifted two spaces to the right.
-#   - We do not invent different SQL formatting for procedures.
-#   - We only add two leading spaces to the already formatted body lines.
-# ======================================================================
-
-function Format-ProcedureStatement {
-    param([string]$Sql)
-
-    $Sql = Normalize-SqlWhitespace $Sql
-    $Sql = Convert-SqlKeywordsToUpper $Sql
-
-    $out = New-Object System.Collections.Generic.List[string]
-
-    $m = [regex]::Match(
-        $Sql,
-        '^(CREATE\s+OR\s+REPLACE\s+PROCEDURE\s+.+?)\s+LANGUAGE\s+SQL\s+BEGIN\s+(.+?)\s+END$',
-        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-    )
-
-    if (-not $m.Success) {
-        $out.Add($Sql)
+    if ($open -lt 0) {
+        $out.Add($prefix + $Sql)
         return $out
     }
 
-    $header = $m.Groups[1].Value.Trim()
-    $body   = $m.Groups[2].Value.Trim()
+    $close = Find-MatchingParen -Text $Sql -OpenIndex $open
+    if ($close -lt 0) {
+        $out.Add($prefix + $Sql)
+        return $out
+    }
 
-    # Header formatting is just space-character movement:
-    #   CREATE ... PROCEDURE NAME
-    #   (
-    #     IN PARAM TYPE
-    #   )
-    #   LANGUAGE SQL
-    if ($header -match '^(CREATE\s+OR\s+REPLACE\s+PROCEDURE\s+[^\(]+)\s*\((.+)\)$') {
-        $out.Add($matches[1].Trim())
-        $out.Add('(')
+    $head = Normalize-Space $Sql.Substring(0, $open)
+    $body = $Sql.Substring($open + 1, $close - $open - 1)
+    $tail = Normalize-Space $Sql.Substring($close + 1)
 
-        $params = @(Split-TopLevelComma $matches[2].Trim())
-        for ($i = 0; $i -lt $params.Count; $i++) {
-            $suffix = if ($i -lt $params.Count - 1) { ',' } else { '' }
-            $out.Add('  ' + $params[$i].Trim() + $suffix)
-        }
+    $out.Add($prefix + $head + " (")
+    Add-IndentedLines -Out $out -Lines @(Format-CommaList -Text $body -FirstPrefix ($prefix + "    ") -NextPrefix ($prefix + "    ")) -Indent 0
+    $out.Add($prefix + ")" + $(if ($tail.Length -gt 0) { " " + $tail } else { "" }))
+    return $out
+}
 
-        $out.Add(')')
+function Format-CreateIndexStatement {
+    param([string]$Sql, [int]$Indent = 0)
+
+    $Sql = Normalize-Space (Strip-TrailingSemicolon $Sql)
+    $prefix = ' ' * $Indent
+    $out = New-Object System.Collections.Generic.List[string]
+    $onMatch = Get-FirstTopLevelMatch -Text $Sql -Pattern '\bON\b'
+
+    if ($null -eq $onMatch) {
+        $out.Add($prefix + $Sql)
+        return $out
+    }
+
+    $head = Normalize-Space $Sql.Substring(0, $onMatch.Index)
+    $tail = Normalize-Space $Sql.Substring($onMatch.Index)
+
+    $out.Add($prefix + $head)
+
+    if (($prefix + "    " + $tail).Length -le 120) {
+        $out.Add($prefix + "    " + $tail)
+        return $out
+    }
+
+    $open = $tail.IndexOf('(')
+    $close = if ($open -ge 0) { Find-MatchingParen -Text $tail -OpenIndex $open } else { -1 }
+
+    if ($open -ge 0 -and $close -gt $open) {
+        $before = Normalize-Space $tail.Substring(0, $open)
+        $cols = $tail.Substring($open + 1, $close - $open - 1)
+        $out.Add($prefix + "    " + $before + " (")
+        Add-IndentedLines -Out $out -Lines @(Format-CommaList -Text $cols -FirstPrefix ($prefix + "        ") -NextPrefix ($prefix + "        ")) -Indent 0
+        $out.Add($prefix + "    )")
     }
     else {
-        $out.Add($header)
+        $out.Add($prefix + "    " + $tail)
     }
-
-    $out.Add('LANGUAGE SQL')
-    $out.Add('BEGIN')
-
-    # Body formatting: format each body statement normally, then add exactly
-    # two spaces in front. This is the simple rule we want for procedures.
-    $bodyStatements = @(Split-SqlStatements $body)
-
-    for ($statementIndex = 0; $statementIndex -lt $bodyStatements.Count; $statementIndex++) {
-        $bodyStatement = $bodyStatements[$statementIndex]
-        $formattedBody = @(Format-SqlStatement $bodyStatement)
-
-        # Procedure body lines get two spaces.
-        # The SQL statement itself keeps its normal internal alignment, just shifted
-        # two columns to the right because it lives inside BEGIN / END.
-        for ($i = 0; $i -lt $formattedBody.Count; $i++) {
-            $line = [string]$formattedBody[$i]
-
-            if (-not [string]::IsNullOrWhiteSpace($line)) {
-                if ($i -eq $formattedBody.Count - 1 -and $line.TrimEnd() -notmatch ';$') {
-                    $line = $line.TrimEnd() + ';'
-                }
-
-                $out.Add('  ' + $line)
-            }
-        }
-
-        # One blank line between separate statements inside BEGIN / END.
-        # Do not add a blank line after the final statement before END.
-        if ($statementIndex -lt $bodyStatements.Count - 1) {
-            $out.Add('')
-        }
-    }
-
-    $out.Add('END')
 
     return $out
 }
 
-# ======================================================================
-# FUNCTION formatter
-# ======================================================================
-# Function formatting follows the same simple rule as procedures:
-#
-#   - CREATE / RETURNS / LANGUAGE / BEGIN / END stay at column 1
-#   - Function body lines get two spaces
-#   - SQL inside the body is formatted by the existing statement formatter
-#
-# We intentionally do not build a separate SQL parser for functions.
-# We only split the wrapper from the body and reuse the existing formatters.
-# ======================================================================
+function Format-CreateViewStatement {
+    param([string]$Sql, [int]$Indent = 0)
 
-function Format-FunctionStatement {
-    param([string]$Sql)
-
-    $Sql = Normalize-SqlWhitespace $Sql
-    $Sql = Convert-SqlKeywordsToUpper $Sql
-
+    $Sql = Normalize-Space (Strip-TrailingSemicolon $Sql)
+    $prefix = ' ' * $Indent
     $out = New-Object System.Collections.Generic.List[string]
+    $asMatch = Get-FirstTopLevelMatch -Text $Sql -Pattern '\bAS\s+SELECT\b'
 
-    $m = [regex]::Match(
-        $Sql,
-        '^(CREATE\s+OR\s+REPLACE\s+FUNCTION\s+.+?)\s+RETURNS\s+(.+?)\s+LANGUAGE\s+SQL\s+BEGIN\s+(.+?)\s+END$',
-        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-    )
-
-    if (-not $m.Success) {
-        $out.Add($Sql)
+    if ($null -eq $asMatch) {
+        $out.Add($prefix + $Sql)
         return $out
     }
 
-    $header  = $m.Groups[1].Value.Trim()
-    $returns = $m.Groups[2].Value.Trim()
-    $body    = $m.Groups[3].Value.Trim()
+    $head = Normalize-Space $Sql.Substring(0, $asMatch.Index)
+    $select = $Sql.Substring($asMatch.Index + 3).Trim()
 
-    # Make the function signature readable:
-    #
-    # CREATE OR REPLACE FUNCTION FN_NAME
-    # (
-    #   P_PARAM INTEGER
-    # )
-    $header = [regex]::Replace($header, '\s*\(\s*', "`n(")
-    $header = [regex]::Replace($header, '\s*\)\s*$', "`n)")
-    $header = [regex]::Replace($header, ',\s*', ",`n  ")
+    $out.Add($prefix + $head + " AS")
+    Add-IndentedLines -Out $out -Lines @(Format-SqlStatement -Statement $select -Indent ($Indent + 2) -NoSemicolon) -Indent 0
+    return $out
+}
 
-    foreach ($line in ($header -split "`n")) {
-        $trim = $line.Trim()
+function Format-AlterTableStatement {
+    param([string]$Sql, [int]$Indent = 0)
 
-        if ($trim -eq '(' -or $trim -eq ')') {
-            $out.Add($trim)
-        }
-        elseif ($trim.Length -gt 0 -and $trim -notmatch '^CREATE\s+') {
-            $out.Add('  ' + $trim)
-        }
-        else {
-            $out.Add($trim)
-        }
+    $Sql = Normalize-Space (Strip-TrailingSemicolon $Sql)
+    $prefix = ' ' * $Indent
+
+    if (($prefix + $Sql).Length -le 120) {
+        return @($prefix + $Sql)
     }
 
-    $out.Add('RETURNS ' + $returns)
-    $out.Add('LANGUAGE SQL')
-    $out.Add('BEGIN')
+    return @(Format-GenericStatement -Sql $Sql -Indent $Indent)
+}
 
-    # Split function body statements.
-    # Functions commonly contain RETURN (...); and possibly DECLARE / SET later.
-    # We reuse the existing formatter for whatever SQL statement appears inside.
-    $bodyStatements = @(Split-SqlStatements $body)
+function Format-RoutineStatement {
+    param([string]$Sql, [int]$Indent = 0)
 
-    for ($statementIndex = 0; $statementIndex -lt $bodyStatements.Count; $statementIndex++) {
-        $bodyStatement = $bodyStatements[$statementIndex].Trim()
+    $Sql = Normalize-Space (Strip-TrailingSemicolon $Sql)
+    $prefix = ' ' * $Indent
+    $out = New-Object System.Collections.Generic.List[string]
 
-        if ($bodyStatement -match '^RETURN\s*\((.+)\)$') {
-            $returnInner = $matches[1].Trim()
+    $beginMatch = Get-FirstTopLevelMatch -Text $Sql -Pattern '\bBEGIN(\s+ATOMIC)?\b'
+    if ($null -eq $beginMatch) {
+        $out.Add($prefix + $Sql)
+        return $out
+    }
 
-            $out.Add('  RETURN (')
+    $header = Normalize-Space $Sql.Substring(0, $beginMatch.Index)
+    $beginToken = Normalize-Space $beginMatch.Value
+    $body = Normalize-Space $Sql.Substring($beginMatch.Index + $beginMatch.Length)
+    $body = $body -replace '\bEND\s*$', ''
 
-            if ($returnInner -match '^SELECT\b' -or $returnInner -match '^WITH\b') {
-                $formattedReturn = @(Format-SqlStatement $returnInner)
+    $open = $header.IndexOf('(')
+    $close = if ($open -ge 0) { Find-MatchingParen -Text $header -OpenIndex $open } else { -1 }
 
-                foreach ($line in $formattedReturn) {
-                    if (-not [string]::IsNullOrWhiteSpace($line)) {
-                        $out.Add('    ' + [string]$line)
-                    }
+    if ($open -ge 0 -and $close -gt $open) {
+        $before = Normalize-Space $header.Substring(0, $open)
+        $params = $header.Substring($open + 1, $close - $open - 1)
+        $after = Normalize-Space $header.Substring($close + 1)
+
+        $out.Add($prefix + $before + " (")
+        Add-IndentedLines -Out $out -Lines @(Format-CommaList -Text $params -FirstPrefix ($prefix + "    ") -NextPrefix ($prefix + "    ")) -Indent 0
+        $out.Add($prefix + ")")
+
+        if ($after.Length -gt 0) {
+            foreach ($part in ([regex]::Split($after, '\s+(?=LANGUAGE|RETURNS|DETERMINISTIC|NO\s+EXTERNAL\s+ACTION)') | Where-Object { $_.Trim().Length -gt 0 })) {
+                $out.Add($prefix + (Normalize-Space $part))
+            }
+        }
+    }
+    else {
+        $out.Add($prefix + $header)
+    }
+
+    $out.Add($prefix + $beginToken)
+
+    $bodyLines = Format-RoutineBody -Body $body -Indent ($Indent + 2)
+    Add-IndentedLines -Out $out -Lines $bodyLines -Indent 0
+
+    $out.Add($prefix + "END")
+    return $out
+}
+
+function Format-RoutineBody {
+    param([string]$Body, [int]$Indent)
+
+    $Body = Normalize-Space $Body
+
+    # SQL PL body formatting is deliberately conservative:
+    # split obvious statement starts and semicolon boundaries, but keep routine body
+    # under the owning BEGIN/END instead of letting top-level splitting break it apart.
+    $Body = [regex]::Replace($Body, '\s+\b(DECLARE|OPEN|FETCH|CLOSE|PREPARE|EXECUTE|IF|END IF|LOOP|END LOOP|LEAVE|SIGNAL|RETURN|MERGE INTO|SELECT|WITH)\b', "`n`$1", 'IgnoreCase')
+    $Body = [regex]::Replace($Body, '\bTHEN\s+(SIGNAL|LEAVE|RETURN|MERGE INTO|SELECT|WITH)\b', "THEN`n`$1", 'IgnoreCase')
+    $Body = [regex]::Replace($Body, ';\s*', ";`n")
+
+    $rawLines = $Body -split "`n" | Where-Object { $_.Trim().Length -gt 0 }
+    $out = New-Object System.Collections.Generic.List[string]
+    $level = 0
+
+    foreach ($raw in $rawLines) {
+        $line = Normalize-Space $raw
+        if ($line -eq ";") { continue }
+
+        $hadSemi = $line.EndsWith(";")
+        $line = $line -replace ';\s*$', ''
+
+        if ($line -match '^(END IF|END LOOP|END)\b') {
+            if ($level -gt 0) { $level-- }
+        }
+
+        $lineIndent = $Indent + ($level * 2)
+
+        if ($line -match '^(SELECT|WITH|MERGE INTO)\b') {
+            Add-IndentedLines -Out $out -Lines @(Format-SqlStatement -Statement $line -Indent $lineIndent -NoSemicolon) -Indent 0
+
+            if ($hadSemi -and $out.Count -gt 0) {
+                $out[$out.Count - 1] = $out[$out.Count - 1].TrimEnd() + ";"
+            }
+        }
+        elseif ($line -match '^DECLARE\s+.+\s+CURSOR\s+FOR\s+SELECT\b') {
+            $m = [regex]::Match($line, '^(DECLARE\s+.+?\s+CURSOR\s+FOR)\s+(SELECT\b.+)$', 'IgnoreCase')
+            if ($m.Success) {
+                $out.Add((' ' * $lineIndent) + (Normalize-Space $m.Groups[1].Value))
+                Add-IndentedLines -Out $out -Lines @(Format-SqlStatement -Statement $m.Groups[2].Value -Indent ($lineIndent + 2) -NoSemicolon) -Indent 0
+
+                if ($hadSemi -and $out.Count -gt 0) {
+                    $out[$out.Count - 1] = $out[$out.Count - 1].TrimEnd() + ";"
                 }
             }
             else {
-                $out.Add('    ' + $returnInner)
+                $out.Add((' ' * $lineIndent) + $line + $(if ($hadSemi) { ";" } else { "" }))
+            }
+        }
+        elseif ($line -match '^RETURN\s+CASE\b') {
+            $caseText = $line -replace '^RETURN\s+', ''
+            $caseLines = @(Format-CaseExpression -Item $caseText -FirstPrefix ((' ' * $lineIndent) + "RETURN ") -NextPrefix ((' ' * $lineIndent) + "       "))
+            foreach ($caseLine in $caseLines) {
+                $out.Add($caseLine)
             }
 
-            $out.Add('  );')
+            if ($hadSemi -and $out.Count -gt 0) {
+                $out[$out.Count - 1] = $out[$out.Count - 1].TrimEnd() + ";"
+            }
         }
         else {
-            $formattedBody = @(Format-SqlStatement $bodyStatement)
-
-            for ($i = 0; $i -lt $formattedBody.Count; $i++) {
-                $line = [string]$formattedBody[$i]
-
-                if (-not [string]::IsNullOrWhiteSpace($line)) {
-                    if ($i -eq $formattedBody.Count - 1 -and $line.TrimEnd() -notmatch ';$') {
-                        $line = $line.TrimEnd() + ';'
-                    }
-
-                    $out.Add('  ' + $line)
-                }
-            }
+            $out.Add((' ' * $lineIndent) + $line + $(if ($hadSemi) { ";" } else { "" }))
         }
 
-        if ($statementIndex -lt $bodyStatements.Count - 1) {
-            $out.Add('')
+        if ($line -match '\b(THEN|LOOP)\b' -and $line -notmatch '^END') {
+            $level++
         }
     }
-
-    $out.Add('END')
 
     return $out
 }
 
-# ======================================================================
-# Dispatcher
-# ======================================================================
+function Format-GenericStatement {
+    param([string]$Sql, [int]$Indent = 0)
 
-function Format-SqlStatement {
+    $Sql = Normalize-Space (Strip-TrailingSemicolon $Sql)
+    $prefix = ' ' * $Indent
+
+    if (($prefix + $Sql).Length -le 120) {
+        return @($prefix + $Sql)
+    }
+
+    $Sql = [regex]::Replace($Sql, '\s+\b(FROM|WHERE|GROUP\s+BY|HAVING|ORDER\s+BY|FETCH\s+FIRST|WITH\s+(UR|RS|CS|RR|NC)|VALUES|SET|ON\s+COMMIT|NOT\s+LOGGED)\b', "`n`$1", 'IgnoreCase')
+    return @($Sql -split "`n" | ForEach-Object { $prefix + (Normalize-Space $_) })
+}
+
+function Extract-LeadingComments {
     param([string]$Statement)
 
-    $Statement = Normalize-SqlWhitespace $Statement
+    $comments = New-Object System.Collections.Generic.List[string]
+    $remaining = $Statement.Trim()
+
+    while ($remaining -match '^\s*(__SQLFMT_(LCOM|BCOM)_\d+__)\s*(.*)$') {
+        $comments.Add($matches[1])
+        $remaining = $matches[3].Trim()
+    }
+
+    return [pscustomobject]@{ Comments = $comments; Body = $remaining }
+}
+
+function Format-SqlStatement {
+    param(
+        [string]$Statement,
+        [int]$Indent = 0,
+        [switch]$NoSemicolon
+    )
+
+    $Statement = Normalize-Space $Statement
     $Statement = Convert-SqlKeywordsToUpper $Statement
 
-    if ($Statement -match '^CREATE\s+OR\s+REPLACE\s+PROCEDURE\b') {
-        return Apply-SafeLineWrapping -Lines (Format-ProcedureStatement $Statement)
-    }
-
-    if ($Statement -match '^CREATE\s+OR\s+REPLACE\s+FUNCTION\b') {
-        return Apply-SafeLineWrapping -Lines (Format-FunctionStatement $Statement)
-    }
-
-    if ($Statement -match '^WITH\b') {
-        return Apply-SafeLineWrapping -Lines (Format-WithStatement $Statement)
-    }
-
-    if ($Statement -match '^SELECT\b') {
-        return Apply-SafeLineWrapping -Lines (Format-CompoundSelectStatement -Sql $Statement -OpeningPrefix "")
-    }
-
-    if ($Statement -match '^INSERT\b') {
-        return Apply-SafeLineWrapping -Lines (Format-InsertStatement $Statement)
-    }
-
-    if ($Statement -match '^UPDATE\b') {
-        return Apply-SafeLineWrapping -Lines (Format-UpdateStatement $Statement)
-    }
-
-    if ($Statement -match '^MERGE\b') {
-        return Apply-SafeLineWrapping -Lines (Format-MergeStatement $Statement)
-    }
-
-    $lines = New-Object System.Collections.Generic.List[string]
-    $lines.Add($Statement)
-    return $lines
-}
-
-# ======================================================================
-# Standalone comment formatter
-# ======================================================================
-# Standalone line comments are protected as SLCOM tokens before whitespace
-# normalization. Because normalization collapses whitespace, those tokens may
-# temporarily sit at the end of a SQL line.
-#
-# This function moves each standalone-comment token onto its own line.
-#
-# Inline comments use LCOM tokens and are intentionally not touched here.
-# ======================================================================
-
-function Format-StandaloneCommentTokens {
-    param([string]$Text)
-
-    # ------------------------------------------------------------------
-    # Final safety pass for standalone comments outside SELECT lists.
-    # ------------------------------------------------------------------
-    # SELECT lists handle comment tokens directly. This function catches
-    # standalone comment tokens that remain in other places, for example:
-    #
-    #   FROM TAB __SQLFMT_BCOM_1__ __SQLFMT_EOL__
-    #   WHERE ...
-    #
-    # It moves the standalone comment token to its own line using the current
-    # line indentation and removes the internal EOL marker without creating a
-    # blank line.
-    #
-    # Inline line comments (LCOM) are intentionally ignored here because they
-    # should stay at the end of the line where they were written.
-    # ------------------------------------------------------------------
-
+    $leading = Extract-LeadingComments -Statement $Statement
     $out = New-Object System.Collections.Generic.List[string]
-    $lines = $Text -split "`r?`n"
 
-    foreach ($line in $lines) {
-        $current = $line
-
-        while ($current -match '(__SQLFMT_(SLCOM|BCOM)_\d+__)') {
-            $token = $matches[1]
-            $tokenIndex = $current.IndexOf($token)
-
-            $before = $current.Substring(0, $tokenIndex).TrimEnd()
-            $after  = $current.Substring($tokenIndex + $token.Length).TrimStart()
-
-            # Remove one following internal EOL marker if it exists. The token
-            # is already being placed on its own line, so keeping the marker
-            # would create an artificial blank line later.
-            $after = [regex]::Replace($after, '^\s*__SQLFMT_EOL__\s*', '')
-
-            $indent = ([regex]::Match($current, '^\s*')).Value
-
-            if (-not [string]::IsNullOrWhiteSpace($before)) {
-                $out.Add($before)
-            }
-
-            $out.Add($indent + $token)
-
-            $current = $after
-        }
-
-        # Any leftover EOL marker on this line is only an internal boundary.
-        # Remove it rather than converting it into an extra empty line.
-        $current = [regex]::Replace($current, '\s*__SQLFMT_EOL__\s*', ' ')
-
-        if (-not [string]::IsNullOrWhiteSpace($current)) {
-            $out.Add($current.TrimEnd())
-        }
-        elseif ($line -eq '') {
-            $out.Add('')
-        }
+    foreach ($c in $leading.Comments) {
+        $out.Add((' ' * $Indent) + $c)
     }
 
-    return ($out -join $script:NewLine)
+    $Statement = $leading.Body
+    if ([string]::IsNullOrWhiteSpace($Statement)) { return $out }
+
+    $bodyNoSemi = Strip-TrailingSemicolon $Statement
+    $upper = $bodyNoSemi.Trim().ToUpperInvariant()
+
+    if ($upper -match '^WITH\b') {
+        Add-IndentedLines -Out $out -Lines @(Format-WithStatement -Sql $bodyNoSemi -Indent $Indent -NoSemicolon:$NoSemicolon) -Indent 0
+    }
+    elseif ($upper -match '^SELECT\b') {
+        Add-IndentedLines -Out $out -Lines @(Format-SelectStatement -Sql $bodyNoSemi -Indent $Indent -NoSemicolon:$NoSemicolon) -Indent 0
+    }
+    elseif ($upper -match '^INSERT\b') {
+        Add-IndentedLines -Out $out -Lines @(Format-InsertStatement -Sql $bodyNoSemi -Indent $Indent -NoSemicolon:$NoSemicolon) -Indent 0
+    }
+    elseif ($upper -match '^UPDATE\b') {
+        Add-IndentedLines -Out $out -Lines @(Format-UpdateStatement -Sql $bodyNoSemi -Indent $Indent) -Indent 0
+    }
+    elseif ($upper -match '^DELETE\b') {
+        Add-IndentedLines -Out $out -Lines @(Format-DeleteStatement -Sql $bodyNoSemi -Indent $Indent) -Indent 0
+    }
+    elseif ($upper -match '^MERGE\b') {
+        Add-IndentedLines -Out $out -Lines @(Format-MergeStatement -Sql $bodyNoSemi -Indent $Indent) -Indent 0
+    }
+    elseif ($upper -match '^CREATE\s+(OR\s+REPLACE\s+)?VIEW\b') {
+        Add-IndentedLines -Out $out -Lines @(Format-CreateViewStatement -Sql $bodyNoSemi -Indent $Indent) -Indent 0
+    }
+    elseif ($upper -match '^CREATE\s+INDEX\b') {
+        Add-IndentedLines -Out $out -Lines @(Format-CreateIndexStatement -Sql $bodyNoSemi -Indent $Indent) -Indent 0
+    }
+    elseif ($upper -match '^(CREATE\s+TABLE|DECLARE\s+GLOBAL\s+TEMPORARY\s+TABLE)\b') {
+        Add-IndentedLines -Out $out -Lines @(Format-CreateTableStatement -Sql $bodyNoSemi -Indent $Indent) -Indent 0
+    }
+    elseif ($upper -match '^ALTER\s+TABLE\b') {
+        Add-IndentedLines -Out $out -Lines @(Format-AlterTableStatement -Sql $bodyNoSemi -Indent $Indent) -Indent 0
+    }
+    elseif ($upper -match '^CREATE\s+SCHEMA\b') {
+        $out.Add((' ' * $Indent) + $bodyNoSemi)
+    }
+    elseif ($upper -match '^CREATE\s+(OR\s+REPLACE\s+)?(PROCEDURE|FUNCTION)\b') {
+        Add-IndentedLines -Out $out -Lines @(Format-RoutineStatement -Sql $bodyNoSemi -Indent $Indent) -Indent 0
+    }
+    else {
+        Add-IndentedLines -Out $out -Lines @(Format-GenericStatement -Sql $bodyNoSemi -Indent $Indent) -Indent 0
+    }
+
+    if (-not $NoSemicolon -and $out.Count -gt 0) {
+        $lastIndex = $out.Count - 1
+        $out[$lastIndex] = $out[$lastIndex].TrimEnd() + ";"
+    }
+
+    return $out
 }
 
-# ======================================================================
-# Main execution
-# ======================================================================
+function Format-SqlText {
+    param([string]$Sql)
 
-$inputSql = [Console]::In.ReadToEnd()
+    $protected = Protect-SqlLiteralsAndComments $Sql
+    $protected = Convert-SqlKeywordsToUpper $protected
 
-if ([string]::IsNullOrWhiteSpace($inputSql)) {
-    exit 0
-}
-
-$script:ProtectedMap = @{}
-$script:ProtectedIndex = 0
-
-$protectedSql = Protect-SqlText $inputSql
-$protectedSql = Normalize-SqlWhitespace $protectedSql
-
-$finalLines = New-Object System.Collections.Generic.List[string]
-
-# Stored procedures contain semicolons inside BEGIN / END.
-# So do not split them first. Format the whole procedure as one wrapper,
-# then shift only the body SQL two spaces to the right.
-if ($protectedSql -match '^\s*CREATE\s+OR\s+REPLACE\s+(PROCEDURE|FUNCTION)\b') {
-    $procedureSql = $protectedSql.Trim()
-
-    if ($procedureSql.EndsWith(';')) {
-        $procedureSql = $procedureSql.Substring(0, $procedureSql.Length - 1).Trim()
-    }
-
-    $formatted = @(Format-SqlStatement $procedureSql)
-
-    foreach ($line in $formatted) {
-        $finalLines.Add([string]$line)
-    }
-
-    if ($finalLines.Count -gt 0 -and $finalLines[$finalLines.Count - 1].Trim() -eq 'END') {
-        $finalLines[$finalLines.Count - 1] = 'END;'
-    }
-}
-else {
-    # Force array behavior. Without @(...), one statement may become a scalar
-    # string, and PowerShell indexing would return characters.
-    $statements = @(Split-SqlStatements $protectedSql)
+    $statements = @(Split-SqlStatements $protected)
+    $allLines = New-Object System.Collections.Generic.List[string]
 
     for ($i = 0; $i -lt $statements.Count; $i++) {
-        $formatted = @(Format-SqlStatement $statements[$i])
+        $lines = @(Format-SqlStatement -Statement $statements[$i] -Indent 0)
 
-        # Restore semicolon on the final non-empty line of each statement.
-        for ($j = $formatted.Count - 1; $j -ge 0; $j--) {
-            $currentLine = [string]$formatted[$j]
-
-            if (-not [string]::IsNullOrWhiteSpace($currentLine)) {
-                $currentLine = $currentLine.TrimEnd()
-
-                if ($currentLine -notmatch ';$') {
-                    $currentLine = $currentLine + ';'
-                }
-
-                $formatted[$j] = $currentLine
-                break
-            }
-        }
-
-        foreach ($line in $formatted) {
-            $finalLines.Add([string]$line)
+        foreach ($line in $lines) {
+            $allLines.Add($line)
         }
 
         if ($i -lt $statements.Count - 1) {
-            $finalLines.Add('')
+            $allLines.Add("")
         }
     }
+
+    $result = ($allLines -join [Environment]::NewLine)
+    $result = Restore-ProtectedTokens $result
+    return $result.TrimEnd() + [Environment]::NewLine
 }
 
-$result = $finalLines -join $script:NewLine
-
-# Move standalone comment tokens back onto their own aligned lines before
-# restoring the real "-- comment" text.
-$result = Format-StandaloneCommentTokens $result
-
-# Safety cleanup:
-# __SQLFMT_EOL__ is an internal marker used to preserve comment line breaks.
-# At this stage, formatting has already placed comments correctly.
-# So any leftover marker should be removed, not converted to a new line,
-# otherwise it creates blank lines after comments.
-$result = [regex]::Replace($result, '\s*__SQLFMT_EOL__\s*', ' ')
-
-$result = Restore-SqlText $result
-
+$inputSql = [Console]::In.ReadToEnd()
+$result = Format-SqlText $inputSql
 [Console]::Out.Write($result)
