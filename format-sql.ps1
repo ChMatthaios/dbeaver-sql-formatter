@@ -66,17 +66,17 @@ function Convert-SqlKeywordsToUpper {
     param([string]$Sql)
 
     $keywords = @(
-        'select','from','where','and','or','not','null','is','in','exists','between','like',
-        'inner','left','right','full','cross','outer','join','on','group','by','having','order',
-        'asc','desc','fetch','first','rows','only','limit','offset','with','ur','rs','cs','rr','nc',
-        'union','all','except','intersect','case','when','then','else','end','as','over','partition',
-        'insert','into','values','update','set','delete','merge','using','matched','then',
-        'create','replace','procedure','function','returns','language','sql','begin','atomic',
-        'declare','cursor','for','continue','handler','open','fetch','close','loop','leave','if',
-        'signal','sqlstate','message_text','prepare','execute','table','view','index','schema',
-        'constraint','primary','key','foreign','references','check','default','temporary','global',
-        'session','commit','preserve','logged','alter','add','column','data','type','optimize',
-        'deterministic','external','action'
+        'select', 'from', 'where', 'and', 'or', 'not', 'null', 'is', 'in', 'exists', 'between', 'like',
+        'inner', 'left', 'right', 'full', 'cross', 'outer', 'join', 'on', 'group', 'by', 'having', 'order',
+        'asc', 'desc', 'fetch', 'first', 'rows', 'only', 'limit', 'offset', 'with', 'ur', 'rs', 'cs', 'rr', 'nc',
+        'union', 'all', 'except', 'intersect', 'case', 'when', 'then', 'else', 'end', 'as', 'over', 'partition',
+        'insert', 'into', 'values', 'update', 'set', 'delete', 'merge', 'using', 'matched', 'then',
+        'create', 'replace', 'procedure', 'function', 'returns', 'language', 'sql', 'begin', 'atomic',
+        'declare', 'cursor', 'for', 'continue', 'handler', 'open', 'fetch', 'close', 'loop', 'leave', 'if',
+        'signal', 'sqlstate', 'message_text', 'prepare', 'execute', 'table', 'view', 'index', 'schema',
+        'constraint', 'primary', 'key', 'foreign', 'references', 'check', 'default', 'temporary', 'global',
+        'session', 'commit', 'preserve', 'logged', 'alter', 'add', 'column', 'data', 'type', 'optimize',
+        'deterministic', 'external', 'action'
     )
 
     foreach ($kw in $keywords) {
@@ -546,11 +546,11 @@ function Get-SelectClauses {
         $nextIndex = if ($i -lt $matches.Count - 1) { $matches[$i + 1].Index } else { $Sql.Length }
 
         $clauses.Add([pscustomobject]@{
-            Name = $m.Value.ToUpperInvariant()
-            Index = $m.Index
-            Length = $m.Length
-            Text = $Sql.Substring($m.Index + $m.Length, $nextIndex - ($m.Index + $m.Length)).Trim()
-        })
+                Name   = $m.Value.ToUpperInvariant()
+                Index  = $m.Index
+                Length = $m.Length
+                Text   = $Sql.Substring($m.Index + $m.Length, $nextIndex - ($m.Index + $m.Length)).Trim()
+            })
     }
 
     return $clauses

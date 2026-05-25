@@ -95,4 +95,31 @@ CUSTOMER_NAME, EMAIL_ADDRESS FROM CUSTOMER WHERE IS_ACTIVE = 1
 -- inline comment beside predicate
 AND CUSTOMER_NAME LIKE 'A%' WITH UR; 
 /* Block comment with SQL-looking text: SELECT * FROM SHOULD_NOT_FORMAT_THIS; */
-SELECT COUNT(*) AS CUSTOMER_COUNT FROM CUSTOMER WITH UR; 
+SELECT COUNT(*) AS CUSTOMER_COUNT FROM CUSTOMER WITH UR;
+
+-- ============================================================
+-- 23. Personal Query for Comment handling
+-- ============================================================
+SELECT A.ID,
+       SUM(CASE
+             WHEN A.TYPE IN (-- comment one
+                             'PAYMENT',
+                             -- comment two
+                             'EXPORT',
+                             'LEAKAGE') THEN A.AMOUNT
+             ELSE 0
+           END) AS TOTAL_AMOUNT,
+       CASE
+         WHEN A.FLAG = 'Y' THEN 1 -- inline flag comment
+         ELSE 0
+       END AS IS_ACTIVE
+  FROM ACCOUNT A
+ WHERE A.STATUS = 'OPEN'
+   AND A.TYPE <> 'TEST'
+    OR A.TYPE IS NULL
+ GROUP BY A.ID,
+          CASE
+            WHEN A.FLAG = 'Y' THEN 1
+            ELSE 0
+          END
+  WITH UR;

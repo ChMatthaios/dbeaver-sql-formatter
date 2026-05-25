@@ -1,139 +1,495 @@
 <#
-    SQL Formatter File Runner
-    ------------------------------------------------------------
-    Usage:
-      .\format-file.ps1 .\input.sql
-      .\format-file.ps1 .\input.sql -OutFile .\output.sql
-      .\format-file.ps1 .\input.sql -InPlace
-      .\format-file.ps1 -help
+    DB2 SQL Formatter - Safe Line-Aware Version
 
-    This script formats SQL from a file using format-sql.ps1.
+    Core formatting logic
+    ---------------------
+    This formatter is intentionally conservative.
 
-    It does not replace format-sql.ps1.
-    DBeaver should still call format-sql.ps1 directly.
+    1. Treat "--" comments as normal visible SQL text.
+       They stay in the output.
+
+    2. Preserve "--" line-comment boundaries.
+       A line comment ends the physical line. The formatter must not move SQL
+       from the next line onto the comment line.
+
+    3. Preserve developer line layout when the input is already multiline.
+       This is the most important safety rule. If a developer already shaped a
+       complex SELECT / CASE / CTE by hand, the formatter must not flatten it.
+
+    4. Format simple one-line SELECT statements into the house style.
+
+    5. Nested SELECTs follow the same style by adding leading indentation.
+
+    6. If unsupported/complex syntax is detected, preserve layout instead of
+       destroying it.
+
+    This is a practical DB2 formatter, not a full SQL parser.
 #>
-
-param(
-    [Parameter(Position = 0)]
-    [string]$InputFile,
-
-    [string]$OutFile,
-
-    [switch]$InPlace,
-
-    [switch]$help
-)
 
 $ErrorActionPreference = "Stop"
 
-$RootDir = $PSScriptRoot
-$Formatter = Join-Path $RootDir "format-sql.ps1"
+# ============================================================
+# Keyword casing helpers
+# ============================================================
 
-function Show-Help {
-    Write-Host ""
-    Write-Host "DBeaver SQL Formatter - File Runner"
-    Write-Host ""
-    Write-Host "Usage:"
-    Write-Host "  .\format-file.ps1 .\input.sql"
-    Write-Host "  .\format-file.ps1 .\input.sql -OutFile .\output.sql"
-    Write-Host "  .\format-file.ps1 .\input.sql -InPlace"
-    Write-Host "  .\format-file.ps1 -help"
-    Write-Host ""
-    Write-Host "Modes:"
-    Write-Host "  default   Writes formatted SQL to stdout."
-    Write-Host "  -OutFile  Writes formatted SQL to a specific output file."
-    Write-Host "  -InPlace  Replaces the input file with formatted SQL."
-    Write-Host "  -help     Shows this help message."
-    Write-Host ""
-    Write-Host "Examples:"
-    Write-Host "  .\format-file.ps1 .\tests\01_simple_one_line_statements.sql"
-    Write-Host "  .\format-file.ps1 .\input.sql -OutFile .\formatted.sql"
-    Write-Host "  .\format-file.ps1 .\input.sql -InPlace"
-    Write-Host ""
+function Convert-SqlKeywordsToUpperSafe {
+    param([string]$Text)
+
+    # Split a line into code/comment parts.
+    # Comments are normal visible text, but we should not keyword-case comment text.
+    $commentIndex = $Text.IndexOf("--")
+
+    if ($commentIndex -ge 0) {
+        $codePart = $Text.Substring(0, $commentIndex)
+        $commentPart = $Text.Substring($commentIndex)
+        return (Convert-CodeKeywordsToUpperSafe $codePart) + $commentPart
+    }
+
+    return Convert-CodeKeywordsToUpperSafe $Text
 }
 
-if ($help) {
-    Show-Help
-    exit 0
-}
+function Convert-CodeKeywordsToUpperSafe {
+    param([string]$Text)
 
-if ([string]::IsNullOrWhiteSpace($InputFile)) {
-    Show-Help
-    exit 1
-}
+    # Protect strings before uppercasing keywords.
+    $map = @{}
+    $index = 0
 
-if (-not (Test-Path $Formatter)) {
-    throw "Formatter script not found: $Formatter"
-}
-
-if (-not (Test-Path $InputFile)) {
-    throw "Input file not found: $InputFile"
-}
-
-if ($InPlace -and -not [string]::IsNullOrWhiteSpace($OutFile)) {
-    throw "Use either -InPlace or -OutFile, not both."
-}
-
-$ResolvedInputFile = (Resolve-Path $InputFile).Path
-
-if ((Get-Item $ResolvedInputFile).PSIsContainer) {
-    throw "Input path is a directory, not a file: $ResolvedInputFile"
-}
-
-function Invoke-SqlFormatter {
-    param(
-        [string]$Sql
+    $protected = [regex]::Replace(
+        $Text,
+        "'(?:''|[^'])*'",
+        {
+            param($m)
+            $scriptToken = "__SQLFMT_STR_$index`__"
+            $map[$scriptToken] = $m.Value
+            $index++
+            $scriptToken
+        }
     )
 
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = "powershell"
-    $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$Formatter`""
-    $psi.UseShellExecute = $false
-    $psi.RedirectStandardInput = $true
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $psi.CreateNoWindow = $true
+    $keywords = @(
+        'select','from','where','and','or','not','null','is','in','exists','between','like',
+        'inner','left','right','full','cross','outer','join','on','group','by','having','order',
+        'asc','desc','fetch','first','rows','only','limit','offset','with','ur','rs','cs','rr','nc',
+        'union','all','except','intersect','case','when','then','else','end','as','over','partition',
+        'insert','into','values','update','set','delete','merge','using','matched',
+        'create','replace','procedure','function','returns','language','sql','begin','atomic',
+        'declare','cursor','for','continue','handler','open','fetch','close','loop','leave','if',
+        'signal','sqlstate','message_text','prepare','execute','table','view','index','schema',
+        'constraint','primary','key','foreign','references','check','default','temporary','global',
+        'session','commit','preserve','logged','alter','add','column','data','type','optimize',
+        'deterministic','external','action'
+    )
 
-    $process = New-Object System.Diagnostics.Process
-    $process.StartInfo = $psi
-
-    [void]$process.Start()
-
-    $process.StandardInput.Write($Sql)
-    $process.StandardInput.Close()
-
-    $output = $process.StandardOutput.ReadToEnd()
-    $errorOutput = $process.StandardError.ReadToEnd()
-
-    $process.WaitForExit()
-
-    if ($process.ExitCode -ne 0) {
-        throw "Formatter failed with exit code $($process.ExitCode): $errorOutput"
+    foreach ($kw in $keywords) {
+        $escaped = [regex]::Escape($kw)
+        $protected = [regex]::Replace(
+            $protected,
+            "(?i)(?<![A-Z0-9_])$escaped(?![A-Z0-9_])",
+            { param($m) $m.Value.ToUpperInvariant() }
+        )
     }
 
-    return $output
-}
-
-$inputSql = Get-Content $ResolvedInputFile -Raw
-$formattedSql = Invoke-SqlFormatter -Sql $inputSql
-
-if ($InPlace) {
-    Set-Content -Path $ResolvedInputFile -Value $formattedSql -Encoding UTF8 -NoNewline
-    Write-Host "Formatted in place:" $ResolvedInputFile
-    exit 0
-}
-
-if (-not [string]::IsNullOrWhiteSpace($OutFile)) {
-    $OutDir = Split-Path -Parent $OutFile
-
-    if (-not [string]::IsNullOrWhiteSpace($OutDir) -and -not (Test-Path $OutDir)) {
-        New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+    foreach ($key in ($map.Keys | Sort-Object Length -Descending)) {
+        $protected = $protected.Replace($key, $map[$key])
     }
 
-    Set-Content -Path $OutFile -Value $formattedSql -Encoding UTF8 -NoNewline
-    Write-Host "Formatted:" $ResolvedInputFile "->" $OutFile
-    exit 0
+    return $protected
 }
 
-[Console]::Out.Write($formattedSql)
-exit 0
+# ============================================================
+# Basic text helpers
+# ============================================================
+
+function Normalize-OneLineWhitespace {
+    param([string]$Text)
+
+    $Text = $Text -replace '[\r\n\t]+', ' '
+    $Text = $Text -replace '\s+', ' '
+    $Text = $Text -replace '\s+,', ','
+    $Text = $Text -replace ',\s*', ', '
+    $Text = $Text -replace '\(\s+', '('
+    $Text = $Text -replace '\s+\)', ')'
+    $Text = $Text -replace '\s+;', ';'
+    return $Text.Trim()
+}
+
+function Get-ParenDepthAt {
+    param([string]$Text, [int]$Index)
+
+    $depth = 0
+    $inString = $false
+
+    for ($i = 0; $i -lt $Index; $i++) {
+        $ch = $Text[$i]
+
+        if ($ch -eq "'") {
+            if ($inString -and $i + 1 -lt $Index -and $Text[$i + 1] -eq "'") {
+                $i++
+                continue
+            }
+
+            $inString = -not $inString
+            continue
+        }
+
+        if ($inString) {
+            continue
+        }
+
+        if ($ch -eq '(') {
+            $depth++
+        }
+        elseif ($ch -eq ')' -and $depth -gt 0) {
+            $depth--
+        }
+    }
+
+    return $depth
+}
+
+function Split-TopLevelByComma {
+    param([string]$Text)
+
+    $items = New-Object System.Collections.Generic.List[string]
+    $depth = 0
+    $start = 0
+    $inString = $false
+
+    for ($i = 0; $i -lt $Text.Length; $i++) {
+        $ch = $Text[$i]
+
+        if ($ch -eq "'") {
+            if ($inString -and $i + 1 -lt $Text.Length -and $Text[$i + 1] -eq "'") {
+                $i++
+                continue
+            }
+
+            $inString = -not $inString
+            continue
+        }
+
+        if ($inString) {
+            continue
+        }
+
+        if ($ch -eq '(') {
+            $depth++
+        }
+        elseif ($ch -eq ')') {
+            if ($depth -gt 0) {
+                $depth--
+            }
+        }
+        elseif ($ch -eq ',' -and $depth -eq 0) {
+            $items.Add((Normalize-OneLineWhitespace $Text.Substring($start, $i - $start)))
+            $start = $i + 1
+        }
+    }
+
+    $tail = Normalize-OneLineWhitespace $Text.Substring($start)
+    if ($tail.Length -gt 0) {
+        $items.Add($tail)
+    }
+
+    return $items
+}
+
+function Find-TopLevelKeyword {
+    param(
+        [string]$Text,
+        [string]$Pattern
+    )
+
+    $rx = [regex]::new($Pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+
+    foreach ($m in $rx.Matches($Text)) {
+        if ((Get-ParenDepthAt -Text $Text -Index $m.Index) -eq 0) {
+            return $m
+        }
+    }
+
+    return $null
+}
+
+function Get-TopLevelKeywordMatches {
+    param(
+        [string]$Text,
+        [string]$Pattern
+    )
+
+    $result = New-Object System.Collections.Generic.List[object]
+    $rx = [regex]::new($Pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+
+    foreach ($m in $rx.Matches($Text)) {
+        if ((Get-ParenDepthAt -Text $Text -Index $m.Index) -eq 0) {
+            $result.Add($m)
+        }
+    }
+
+    return $result
+}
+
+# ============================================================
+# Safe multiline formatting
+# ============================================================
+
+function Format-MultilineSafely {
+    param([string]$Sql)
+
+    # This is the safety-first path.
+    #
+    # It preserves developer line breaks and indentation. It only:
+    # - trims trailing whitespace,
+    # - uppercases SQL keywords outside strings/comments,
+    # - normalizes leading AND/OR alignment in WHERE-like blocks when obvious.
+    #
+    # It does NOT flatten the query.
+    $lines = $Sql -replace "`r`n", "`n"
+    $lines = $lines -replace "`r", "`n"
+    $arr = $lines -split "`n", -1
+
+    $out = New-Object System.Collections.Generic.List[string]
+    $lastWhereIndent = $null
+
+    foreach ($rawLine in $arr) {
+        $line = $rawLine.TrimEnd()
+
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            $out.Add("")
+            continue
+        }
+
+        $converted = Convert-SqlKeywordsToUpperSafe $line
+
+        # Track WHERE indentation.
+        if ($converted -match '^(\s*)WHERE\b') {
+            $lastWhereIndent = $matches[1]
+        }
+
+        # Align obvious AND / OR lines under WHERE.
+        # This is intentionally conservative and only affects lines whose first
+        # SQL token is AND or OR.
+        if ($null -ne $lastWhereIndent -and $converted -match '^\s*(AND|OR)\s+(.+)$') {
+            $op = $matches[1].ToUpperInvariant()
+            $body = $matches[2]
+
+            if ($op -eq "AND") {
+                $converted = $lastWhereIndent + "   AND " + $body
+            }
+            else {
+                $converted = $lastWhereIndent + "    OR " + $body
+            }
+        }
+
+        $out.Add($converted)
+    }
+
+    return (($out -join [Environment]::NewLine).TrimEnd() + [Environment]::NewLine)
+}
+
+# ============================================================
+# One-line SELECT formatter
+# ============================================================
+# This path is used when the input is not already developer-formatted.
+# It formats SELECT columns one per line and predictable clauses.
+# ============================================================
+
+function Format-OneLineSelect {
+    param(
+        [string]$Sql,
+        [int]$Indent = 0
+    )
+
+    $prefix = ' ' * $Indent
+    $sql = Convert-CodeKeywordsToUpperSafe (Normalize-OneLineWhitespace $Sql.Trim().TrimEnd(';'))
+
+    if ($sql -notmatch '^\s*SELECT\b') {
+        return $prefix + $sql + ";"
+    }
+
+    $clausePattern = '\bFROM\b|\bWHERE\b|\bGROUP\s+BY\b|\bHAVING\b|\bORDER\s+BY\b|\bFETCH\s+FIRST\b|\bWITH\s+(UR|RS|CS|RR|NC)\b'
+    $matches = @(Get-TopLevelKeywordMatches -Text $sql -Pattern $clausePattern)
+
+    if ($matches.Count -eq 0) {
+        $selectList = $sql -replace '^\s*SELECT\s+', ''
+        return Format-CommaListLines -Text $selectList -FirstPrefix ($prefix + "SELECT ") -NextPrefix ($prefix + "       ") -AddSemicolon
+    }
+
+    $out = New-Object System.Collections.Generic.List[string]
+    $firstClause = $matches[0]
+    $selectList = $sql.Substring(6, $firstClause.Index - 6).Trim()
+
+    foreach ($line in (Format-CommaListLines -Text $selectList -FirstPrefix ($prefix + "SELECT ") -NextPrefix ($prefix + "       "))) {
+        $out.Add($line)
+    }
+
+    for ($i = 0; $i -lt $matches.Count; $i++) {
+        $m = $matches[$i]
+        $next = if ($i -lt $matches.Count - 1) { $matches[$i + 1].Index } else { $sql.Length }
+        $name = $m.Value.ToUpperInvariant()
+        $body = Normalize-OneLineWhitespace $sql.Substring($m.Index + $m.Length, $next - ($m.Index + $m.Length))
+
+        switch -Regex ($name) {
+            '^FROM$' {
+                $out.Add($prefix + "  FROM " + $body)
+                break
+            }
+            '^WHERE$' {
+                Add-WhereLines -Out $out -Body $body -Prefix $prefix
+                break
+            }
+            '^GROUP BY$' {
+                foreach ($line in (Format-CommaListLines -Text $body -FirstPrefix ($prefix + " GROUP BY ") -NextPrefix ($prefix + "          "))) {
+                    $out.Add($line)
+                }
+                break
+            }
+            '^ORDER BY$' {
+                foreach ($line in (Format-CommaListLines -Text $body -FirstPrefix ($prefix + " ORDER BY ") -NextPrefix ($prefix + "          "))) {
+                    $out.Add($line)
+                }
+                break
+            }
+            '^FETCH FIRST$' {
+                $out.Add($prefix + " FETCH FIRST " + $body)
+                break
+            }
+            '^WITH ' {
+                $out.Add($prefix + "  " + $name)
+                break
+            }
+            default {
+                $out.Add($prefix + " " + $name + " " + $body)
+            }
+        }
+    }
+
+    if ($out.Count -gt 0) {
+        $out[$out.Count - 1] = $out[$out.Count - 1].TrimEnd() + ";"
+    }
+
+    return ($out -join [Environment]::NewLine)
+}
+
+function Format-CommaListLines {
+    param(
+        [string]$Text,
+        [string]$FirstPrefix,
+        [string]$NextPrefix,
+        [switch]$AddSemicolon
+    )
+
+    $items = @(Split-TopLevelByComma $Text)
+    $out = New-Object System.Collections.Generic.List[string]
+
+    for ($i = 0; $i -lt $items.Count; $i++) {
+        $suffix = if ($i -lt $items.Count - 1) { "," } else { "" }
+        if ($AddSemicolon -and $i -eq $items.Count - 1) {
+            $suffix += ";"
+        }
+
+        $prefix = if ($i -eq 0) { $FirstPrefix } else { $NextPrefix }
+        $out.Add($prefix + $items[$i] + $suffix)
+    }
+
+    return $out
+}
+
+function Add-WhereLines {
+    param(
+        [System.Collections.Generic.List[string]]$Out,
+        [string]$Body,
+        [string]$Prefix
+    )
+
+    $parts = Split-WhereLogicalParts $Body
+
+    for ($i = 0; $i -lt $parts.Count; $i++) {
+        $part = $parts[$i]
+
+        if ($i -eq 0) {
+            $Out.Add($Prefix + " WHERE " + $part)
+        }
+        elseif ($part -match '^(AND|OR)\s+(.+)$') {
+            $op = $matches[1].ToUpperInvariant()
+            $rest = $matches[2]
+
+            if ($op -eq "AND") {
+                $Out.Add($Prefix + "   AND " + $rest)
+            }
+            else {
+                $Out.Add($Prefix + "    OR " + $rest)
+            }
+        }
+        else {
+            $Out.Add($Prefix + "   AND " + $part)
+        }
+    }
+}
+
+function Split-WhereLogicalParts {
+    param([string]$Text)
+
+    $matches = @(Get-TopLevelKeywordMatches -Text $Text -Pattern '\b(AND|OR)\b')
+    $parts = New-Object System.Collections.Generic.List[string]
+
+    if ($matches.Count -eq 0) {
+        $parts.Add((Normalize-OneLineWhitespace $Text))
+        return $parts
+    }
+
+    $start = 0
+
+    foreach ($m in $matches) {
+        if ($m.Index -gt $start) {
+            $segment = Normalize-OneLineWhitespace $Text.Substring($start, $m.Index - $start)
+            if ($segment.Length -gt 0) {
+                $parts.Add($segment)
+            }
+        }
+
+        $start = $m.Index
+    }
+
+    $tail = Normalize-OneLineWhitespace $Text.Substring($start)
+    if ($tail.Length -gt 0) {
+        $parts.Add($tail)
+    }
+
+    return $parts
+}
+
+# ============================================================
+# Main
+# ============================================================
+
+function Format-SqlText {
+    param([string]$Sql)
+
+    $normalizedNewlines = $Sql -replace "`r`n", "`n"
+    $normalizedNewlines = $normalizedNewlines -replace "`r", "`n"
+
+    $nonEmptyLines = @(
+        $normalizedNewlines -split "`n" |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+
+    # Safety decision:
+    # If SQL is already multiline, preserve layout. This prevents the formatter
+    # from destroying complex hand-shaped DB2 SQL with comments and CASE blocks.
+    if ($nonEmptyLines.Count -gt 1) {
+        return Format-MultilineSafely $Sql
+    }
+
+    $oneLine = $normalizedNewlines.Trim()
+
+    if ($oneLine -match '^\s*SELECT\b') {
+        return (Format-OneLineSelect $oneLine) + [Environment]::NewLine
+    }
+
+    return (Convert-SqlKeywordsToUpperSafe (Normalize-OneLineWhitespace $oneLine)) + [Environment]::NewLine
+}
+
+$inputSql = [Console]::In.ReadToEnd()
+[Console]::Out.Write((Format-SqlText $inputSql))
