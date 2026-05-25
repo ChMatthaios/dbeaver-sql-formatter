@@ -23,6 +23,48 @@ function New-ProtectedToken {
     return $token
 }
 
+function Preserve-CommentLineBoundaries {
+    param([string]$Sql)
+
+    # Comments are normal visible text in the SQL.
+    # We do not parse them, move them, delete them, or treat them as SQL.
+    #
+    # But a comment line is still a physical line in the developer's query.
+    # If a protected comment token is followed by a newline, that newline must
+    # survive formatting.
+    #
+    # Without this, Normalize-Space can turn:
+    #
+    #   -- Some comment.
+    #   CAST('-200' AS CHAR(20)) AS MSG_TP_CD,
+    #
+    # into:
+    #
+    #   -- Some comment. CAST('-200' AS CHAR(20)) AS MSG_TP_CD,
+    #
+    # which makes the SQL after the comment look like part of the comment.
+    #
+    # This supports both:
+    #   -- line comments
+    #   /* block comments */
+    #
+    # when they are followed by a physical newline.
+    $Sql = [regex]::Replace(
+        $Sql,
+        '(__SQLFMT_(?:LCOM|BCOM)_\d+__)(\r?\n)([ \t]*)',
+        {
+            param($m)
+
+            $commentToken = $m.Groups[1].Value
+            $indentLength = $m.Groups[3].Value.Length
+
+            return $commentToken + " __SQLFMT_COMMENT_EOL_$indentLength`__ "
+        }
+    )
+
+    return $Sql
+}
+
 function Protect-SqlLiteralsAndComments {
     param([string]$Sql)
 
@@ -33,6 +75,11 @@ function Protect-SqlLiteralsAndComments {
     $Sql = [regex]::Replace($Sql, "'(?:''|[^'])*'", { param($m) New-ProtectedToken -Prefix "STR" -Value $m.Value })
     $Sql = [regex]::Replace($Sql, '"(?:""|[^"])*"', { param($m) New-ProtectedToken -Prefix "DQS" -Value $m.Value })
     $Sql = [regex]::Replace($Sql, '--[^\r\n]*', { param($m) New-ProtectedToken -Prefix "LCOM" -Value $m.Value })
+
+    # Preserve physical line boundaries after protected comments.
+    # Comments remain normal text, but SQL that was on the next line must stay on
+    # the next line.
+    $Sql = Preserve-CommentLineBoundaries $Sql
 
     return $Sql
 }
@@ -458,6 +505,32 @@ function Format-WindowExpression {
     return $out
 }
 
+function Extract-LeadingCommentLinesFromSelectItem {
+    param([string]$Item)
+
+    # Comments are normal visible text lines in the SELECT list.
+    #
+    # At this stage, comments look like:
+    #
+    #   __SQLFMT_LCOM_12__ __SQLFMT_COMMENT_EOL_14__ CASE WHEN ...
+    #
+    # The comment must be printed as its own SELECT-list line, and the SQL after
+    # it must still be formatted normally. For example, if the SQL after the
+    # comment is CASE, it must still go through Format-CaseExpression.
+    $comments = New-Object System.Collections.Generic.List[string]
+    $remaining = $Item.Trim()
+
+    while ($remaining -match '^\s*(__SQLFMT_(?:LCOM|BCOM)_\d+__)(?:\s+__SQLFMT_COMMENT_EOL_\d+__)?\s*(.*)$') {
+        $comments.Add($matches[1])
+        $remaining = $matches[2].Trim()
+    }
+
+    return [pscustomobject]@{
+        Comments = $comments
+        Sql      = $remaining
+    }
+}
+
 function Format-SelectList {
     param([string]$Text, [int]$Indent)
 
@@ -470,6 +543,37 @@ function Format-SelectList {
         $suffix = if ($i -lt $items.Count - 1) { "," } else { "" }
         $prefix = if ($i -eq 0) { $firstPrefix } else { $nextPrefix }
         $item = $items[$i]
+
+        # If a SELECT-list item starts with one or more comment lines, print those
+        # comments first using the normal SELECT-list column indentation. Then continue
+        # formatting the SQL expression after the comment.
+        #
+        # This fixes:
+        #
+        #   -- comment
+        #   CASE ...
+        #
+        # being treated as:
+        #
+        #   comment + CASE as one unformatted expression
+        $commentSplit = Extract-LeadingCommentLinesFromSelectItem -Item $item
+
+        foreach ($commentLine in $commentSplit.Comments) {
+            $out.Add($nextPrefix + $commentLine)
+        }
+
+        $item = $commentSplit.Sql
+
+        if ([string]::IsNullOrWhiteSpace($item)) {
+            continue
+        }
+
+        # If the item originally started with comments, the actual SQL expression is no
+        # longer the first visible SELECT column line, so use the normal continuation
+        # prefix instead of "SELECT ".
+        if ($commentSplit.Comments.Count -gt 0) {
+            $prefix = $nextPrefix
+        }
 
         if ($item -match '^\s*CASE\b') {
             $caseLines = @(Format-CaseExpression -Item $item -FirstPrefix $prefix -NextPrefix $nextPrefix)
@@ -576,7 +680,13 @@ function Format-FromClause {
         $m = $matches[$i]
         $next = if ($i -lt $matches.Count - 1) { $matches[$i + 1].Index } else { $Text.Length }
         $joinText = Normalize-Space $Text.Substring($m.Index, $next - $m.Index)
-        $out.Add($prefix + " " + $joinText)
+        # Align JOIN clauses with the SELECT body clauses.
+        # FROM is emitted as:
+        #   "  FROM ..."
+        #
+        # JOIN should start in the same clause column:
+        #   "  LEFT JOIN ..."
+        $out.Add($prefix + "  " + $joinText)
     }
 
     return $out
@@ -595,8 +705,23 @@ function Format-WhereClause {
         if ($i -eq 0) {
             $out.Add($prefix + $Keyword + " " + $part)
         }
-        elseif ($part -match '^(AND|OR)\b') {
-            $out.Add($prefix + "   " + $part)
+        elseif ($part -match '^(AND|OR)\s+(.+)$') {
+            $logicalOperator = $matches[1].ToUpperInvariant()
+            $condition = $matches[2]
+                
+            # Align AND / OR condition bodies.
+            #
+            # "   AND " = 7 characters
+            # "    OR " = 7 characters
+            #
+            # This keeps the condition text aligned no matter whether the logical
+            # operator is AND or OR.
+            if ($logicalOperator -eq "AND") {
+                $out.Add($prefix + "   AND " + $condition)
+            }
+            else {
+                $out.Add($prefix + "    OR " + $condition)
+            }
         }
         else {
             $out.Add($prefix + "   AND " + $part)
@@ -1321,6 +1446,52 @@ function Format-SqlText {
     }
 
     $result = ($allLines -join [Environment]::NewLine)
+
+    # If the formatter has already placed the next SQL token on a new physical line,
+    # do not add another newline for the original comment boundary.
+    #
+    # Example:
+    #
+    #   WHEN ... THEN ... -- comment __SQLFMT_COMMENT_EOL_14__
+    #   WHEN ...
+    #
+    # should become:
+    #
+    #   WHEN ... THEN ... -- comment
+    #   WHEN ...
+    #
+    # not:
+    #
+    #   WHEN ... THEN ... -- comment
+    #
+    #   WHEN ...
+    $result = [regex]::Replace(
+        $result,
+        '[ \t]*__SQLFMT_COMMENT_EOL_\d+__[ \t]*(\r?\n)',
+        '$1'
+    )
+
+    # For remaining comment-boundary markers where SQL is still on the same
+    # formatted line, restore the original physical line break.
+    #
+    # Example:
+    #
+    #   -- comment __SQLFMT_COMMENT_EOL_14__ CAST(...)
+    #
+    # becomes:
+    #
+    #   -- comment
+    #              CAST(...)
+    $result = [regex]::Replace(
+        $result,
+        '[ \t]*__SQLFMT_COMMENT_EOL_(\d+)__[ \t]*',
+        {
+            param($m)
+
+            return [Environment]::NewLine + (' ' * [int]$m.Groups[1].Value)
+        }
+    )
+    
     $result = Restore-ProtectedTokens $result
     
     # Do not force a trailing newline.

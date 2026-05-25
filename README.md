@@ -1,26 +1,25 @@
 # DBeaver SQL Formatter
 
-A PowerShell-based DB2-oriented SQL formatter designed to work well with DBeaver's external formatter flow, while also being usable directly from the command line.
+A PowerShell-based SQL formatter focused on DB2 SQL and DBeaver integration.
 
-The formatter reads SQL from standard input and writes formatted SQL to standard output. This makes it easy to integrate with tools that support external commands.
+The formatter reads SQL from **stdin** and writes formatted SQL to **stdout**, which makes it usable as a DBeaver external formatter and also from the command line.
 
 ## Current status
 
-This project is working, but still evolving.
+This project is working and actively improving.
 
-The formatter was rewritten around a recursive formatting approach:
+The formatter is intentionally heuristic. It is **not** a full DB2 parser. The goal is to format practical DB2 SQL consistently without destroying the developer's query.
 
-- SELECT formatting is reused across plain queries, CTEs, subqueries, MERGE source queries, CREATE VIEW statements, cursors, procedures, and functions.
-- DB2 SQL and SQL PL patterns are handled more deliberately.
-- The formatter is still heuristic. It is not a full DB2 parser.
+Current formatting principles:
 
-The current goals are:
-
-1. Keep the existing DBeaver workflow stable.
-2. Improve formatter behavior safely and gradually.
-3. Keep regression checks available before making larger changes.
-4. Add broader DB2 examples and stress tests.
-5. Later, add a standalone UI/UX app that uses the same formatter core.
+1. Format `SELECT` statements consistently.
+2. Format nested `SELECT` statements the same way as top-level `SELECT` statements, only with added left indentation.
+3. Format CTEs, subqueries, `MERGE USING (SELECT ...)`, `CREATE VIEW AS SELECT`, cursors, procedures, and functions using the same core formatter where possible.
+4. Treat comments as normal visible text in the SQL.
+5. Preserve comment line boundaries. SQL that was on the line after a comment must stay on the line after the comment.
+6. Format `CASE / WHEN / ELSE / END` blocks consistently.
+7. Align `AND` / `OR` conditions predictably.
+8. If the formatter does not understand something safely, it should avoid destroying the query.
 
 ## Project structure
 
@@ -31,6 +30,8 @@ dbeaver-sql-formatter/
 ├─ format-sql.ps1
 ├─ format.ps1
 ├─ format-file.ps1
+├─ sqlfmt-gui.ps1
+├─ sqlfmt-gui.cmd
 ├─ scripts/
 │  └─ install-sqlfmt-command.ps1
 ├─ examples/
@@ -39,75 +40,89 @@ dbeaver-sql-formatter/
 └─ tests_out/
 ```
 
-## Main files
+Some files may not exist yet depending on your local checkout. The important core files are:
+
+```text
+format-sql.ps1
+format.ps1
+format-file.ps1
+README.md
+```
+
+## Main scripts
 
 ### `format-sql.ps1`
 
 The actual SQL formatter.
 
-It reads SQL from stdin:
+It reads SQL from standard input and writes formatted SQL to standard output.
 
-```powershell
-$inputSql = [Console]::In.ReadToEnd()
-```
-
-and writes formatted SQL to stdout:
-
-```powershell
-[Console]::Out.Write($result)
-```
-
-This stdin/stdout behavior is important because it allows the formatter to work with DBeaver and other external tools.
+This stdin/stdout behavior is required for DBeaver external formatter usage.
 
 ### `format.ps1`
 
 The local test/helper runner.
 
-Use it to list test files, regenerate outputs, check outputs, or format a single test case.
+Use it to list test files, format test files, regenerate outputs, and check outputs.
 
 ### `format-file.ps1`
 
-A file-based runner for normal command-line usage.
+The file-based runner.
 
-Use it when you want to format a SQL file directly instead of piping SQL through stdin.
+Use it when you want to format a `.sql` file directly from PowerShell.
+
+### `sqlfmt-gui.ps1`
+
+A simple standalone Windows GUI around `format-sql.ps1`.
+
+The GUI is only a wrapper. It does not duplicate formatter logic.
 
 ### `scripts/install-sqlfmt-command.ps1`
 
-Optional installer that adds a convenient PowerShell command named `sqlfmt`.
+Optional helper that installs a PowerShell command named `sqlfmt`.
 
-It does not hardcode personal paths. It detects the project root automatically and stores it in the user environment variable:
+The command should point to the project folder through:
 
 ```text
 DBEAVER_SQL_FORMATTER_HOME
 ```
 
+Do not hardcode personal local paths in public documentation or committed scripts.
+
 ## Requirements
 
+- Windows
 - Windows PowerShell
-- Git, if you want to clone or contribute
-- DBeaver, if you want to use it as a DBeaver external formatter
+- DBeaver, if using the DBeaver formatter integration
+- Git, if contributing or pushing changes to GitHub
 
-## Basic usage
+## Basic command-line usage
 
-From the project root:
+From the repository root:
+
+```powershell
+.\format.ps1 -help
+```
+
+List available test files:
 
 ```powershell
 .\format.ps1 -list
 ```
 
-Formats all SQL test inputs and writes outputs to `tests_out`:
+Format all test files and write output files:
 
 ```powershell
 .\format.ps1 -runall
 ```
 
-Checks formatter output against the committed expected outputs in `tests_out`:
+Check formatter output against expected output:
 
 ```powershell
 .\format.ps1 -check
 ```
 
-Formats one matching test file:
+Format one matching test file:
 
 ```powershell
 .\format.ps1 -file 01
@@ -119,17 +134,11 @@ or:
 .\format.ps1 -file 04_complicated_multiline_statements.sql
 ```
 
-Shows the available commands:
-
-```powershell
-.\format.ps1 -help
-```
-
 ## Formatting a SQL file
 
-Use `format-file.ps1` when you want to format a file directly.
+Use `format-file.ps1` for normal file-based formatting.
 
-Write formatted SQL to the terminal:
+Print formatted SQL to the terminal:
 
 ```powershell
 .\format-file.ps1 .\input.sql
@@ -153,27 +162,25 @@ Show help:
 .\format-file.ps1 -help
 ```
 
-`format-file.ps1` is for normal file-based usage. DBeaver should still call `format-sql.ps1` directly because DBeaver works through stdin and stdout.
+## Optional `sqlfmt` command
 
-## Optional PowerShell command: `sqlfmt`
+You can install a convenient PowerShell command named `sqlfmt`.
 
-For convenience, you can install a local PowerShell command named `sqlfmt`.
-
-From the project root, run:
+From the repository root:
 
 ```powershell
 .\scripts\install-sqlfmt-command.ps1
 ```
 
-If PowerShell blocks script execution, run:
+If PowerShell blocks script execution:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-sqlfmt-command.ps1
 ```
 
-Then close and reopen PowerShell.
+Close and reopen PowerShell after installation.
 
-You can now use:
+Then use:
 
 ```powershell
 sqlfmt --list
@@ -183,87 +190,120 @@ sqlfmt --file 01
 sqlfmt --help
 ```
 
-The installer adds a small `sqlfmt` wrapper function to the current user's PowerShell profile.
+Do not document or recommend a generic command named `format`. It can conflict with other PowerShell functions, aliases, or Windows commands. Use `sqlfmt`.
 
-It avoids personal or machine-specific paths by using:
+## Standalone GUI usage
 
-```text
-DBEAVER_SQL_FORMATTER_HOME
-```
+The standalone GUI is useful when you want a small app outside DBeaver.
 
-Do not use a generic command name like `format` for public documentation. `format` may conflict with existing Windows commands or local user functions. `sqlfmt` is safer and clearer.
-
-## Examples
-
-A broad DB2 sample file is available at:
-
-```text
-examples/sample-db2.sql
-```
-
-Try formatting it with:
+Run:
 
 ```powershell
-.\format-file.ps1 .\examples\sample-db2.sql -OutFile .\examples\sample-db2.formatted.sql
+powershell -NoProfile -ExecutionPolicy Bypass -File .\sqlfmt-gui.ps1
 ```
 
-The generated formatted file is only for local inspection. Do not commit generated `*.formatted.sql` files unless you intentionally want to add them as expected output.
+If Windows blocks the script because it came from the internet, unblock it:
 
-The sample includes beginner-to-advanced SQL patterns such as:
+```powershell
+Unblock-File .\sqlfmt-gui.ps1
+```
 
-- SELECT statements,
-- joins,
-- subqueries,
-- CTEs,
-- recursive CTEs,
-- window functions,
-- set operations,
-- INSERT,
-- UPDATE,
-- DELETE,
-- MERGE,
-- CREATE TABLE,
-- CREATE INDEX,
-- CREATE VIEW,
-- ALTER TABLE,
-- declared global temporary tables,
-- procedures,
-- functions,
-- cursors,
-- handlers,
-- dynamic SQL,
-- comments,
-- DB2-specific clauses such as `WITH UR`, `FETCH FIRST`, and `OPTIMIZE FOR`.
+Then run again:
 
-## Formatter behavior
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\sqlfmt-gui.ps1
+```
 
-The formatter is DB2-oriented and currently focuses on:
+If `sqlfmt-gui.cmd` exists, you can run:
 
-- consistent SELECT formatting,
-- aligned SELECT lists,
-- CASE expression formatting,
-- CTE formatting,
-- recursive CTE formatting,
-- nested SELECT formatting,
-- MERGE formatting,
-- CREATE VIEW formatting,
-- CREATE TABLE / CREATE INDEX formatting,
-- SQL PL procedure/function formatting,
-- preserving strings and comments during formatting.
+```powershell
+.\sqlfmt-gui.cmd
+```
 
-The formatter is heuristic, not a complete DB2 parser. That means there may still be unsupported DB2 syntax, edge cases, or style preferences that need refinement.
-
-## DBeaver usage
-
-This formatter is designed to work with DBeaver as an external SQL formatter.
-
-Current known setup:
+or double-click:
 
 ```text
-Preferences → Editors → SQL Editor → SQL Formatting
+sqlfmt-gui.cmd
 ```
 
-The formatter is triggered from DBeaver with:
+The GUI currently supports:
+
+- paste SQL,
+- open SQL file,
+- format,
+- copy output,
+- save output,
+- replace opened input file,
+- clear,
+- status messages.
+
+The GUI calls:
+
+```text
+format-sql.ps1
+```
+
+from the same repository folder.
+
+## DBeaver setup
+
+The formatter is designed to work as an external formatter in DBeaver.
+
+### 1. Open DBeaver preferences
+
+In DBeaver, go to:
+
+```text
+Window → Preferences
+```
+
+Then open:
+
+```text
+Editors → SQL Editor → SQL Formatting
+```
+
+Depending on your DBeaver version, the exact menu wording may be slightly different, but the SQL formatter settings are under the SQL Editor preferences.
+
+### 2. Choose external formatter
+
+Configure DBeaver to use an external formatter command.
+
+Use PowerShell and point it directly to `format-sql.ps1`.
+
+Command shape:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "FULL_PATH_TO_REPOSITORY\format-sql.ps1"
+```
+
+Example:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Path\To\dbeaver-sql-formatter\format-sql.ps1"
+```
+
+Replace this part:
+
+```text
+C:\Path\To\dbeaver-sql-formatter
+```
+
+with your actual cloned repository path.
+
+Do **not** commit your personal Windows path to the repository.
+
+### 3. Apply and save
+
+Click:
+
+```text
+Apply and Close
+```
+
+### 4. Format SQL in DBeaver
+
+Use:
 
 ```text
 Ctrl + Shift + F
@@ -272,114 +312,171 @@ Ctrl + Shift + F
 DBeaver formats either:
 
 - the selected SQL text, or
-- the query where the cursor currently is.
+- the SQL statement/query where the cursor currently is.
 
-No extra DBeaver-specific settings are currently required.
+For reliable results, select the full query before formatting, especially for large CTEs or multi-statement scripts.
 
-### Recommended DBeaver command
+## DBeaver troubleshooting
 
-Use PowerShell directly and point it to `format-sql.ps1`.
+### DBeaver and GUI output differ
 
-Example command shape:
+If DBeaver and the GUI produce different output, they are probably not using the same input or not using the same formatter file.
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "FULL_PATH_TO_REPOSITORY\format-sql.ps1"
-```
+Check:
 
-Replace `FULL_PATH_TO_REPOSITORY` with the folder where this project is cloned.
+1. DBeaver points to the current repository's `format-sql.ps1`.
+2. The GUI is in the same folder as the same `format-sql.ps1`.
+3. You selected the full query in DBeaver.
+4. You did not accidentally point DBeaver to `format.ps1` or `format-file.ps1`.
 
-Example:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Path\To\dbeaver-sql-formatter\format-sql.ps1"
-```
-
-Do not commit personal local paths to this repository.
-
-### Why DBeaver should call `format-sql.ps1`
-
-For DBeaver integration, the formatter script should behave like a stdin/stdout command:
-
-```text
-SQL input  → stdin  → format-sql.ps1 → stdout → formatted SQL output
-```
-
-That is why DBeaver should call:
+DBeaver should call:
 
 ```text
 format-sql.ps1
 ```
 
-not the test runner:
+not:
 
 ```text
 format.ps1
+format-file.ps1
 ```
 
-`format.ps1` is for local testing and development.
+### PowerShell blocks the script
 
-## Test runner behavior
-
-### `-runall`
+Run:
 
 ```powershell
-.\format.ps1 -runall
+Unblock-File .\format-sql.ps1
 ```
 
-Regenerates output files in:
-
-```text
-tests_out/
-```
-
-This is useful when you intentionally change formatter behavior.
-
-### `-check`
+or call it with:
 
 ```powershell
-.\format.ps1 -check
+powershell -NoProfile -ExecutionPolicy Bypass -File .\format-sql.ps1
 ```
 
-Formats test inputs into a temporary folder and compares them against the committed files in:
+### Extra blank lines appear after repeated formatting
 
-```text
-tests_out/
+The formatter should not force an extra trailing newline. The final return in `format-sql.ps1` should avoid adding blank lines repeatedly when DBeaver formats only the current statement.
+
+## Formatting behavior notes
+
+### CTEs
+
+CTE inner `SELECT` lists should align as if the inner `SELECT` starts normally, with only the parent CTE indentation added.
+
+Example target shape:
+
+```sql
+WITH PAY_ENRICH
+  AS ( SELECT P.MSR_PRD_ID,
+              P."YEAR",
+              P."MONTH",
+              P.OPER_DT
+         FROM SOME_TABLE P
+     )
+SELECT *
+  FROM PAY_ENRICH
+ WITH UR;
 ```
 
-This does not overwrite expected outputs.
+### Comments
 
-Use this before committing changes.
+Comments are treated as normal visible text.
 
-A successful check looks like:
+A comment line must remain a line in the query.
 
-```text
-PASS 01_simple_one_line_statements.sql
-PASS 02_simple_multiline_statements.sql
-...
-Check complete. Passed: X. Failed: 0.
+This is valid and should stay structurally safe:
+
+```sql
+SELECT A.ID,
+       -- Explanation for the next column.
+       CAST('-200' AS CHAR(20)) AS MSG_TP_CD,
+       CASE
+         WHEN A.FLAG = 'Y' THEN 1 -- inline comment
+         ELSE 0
+       END AS IS_ACTIVE
+  FROM ACCOUNT A
+ WITH UR;
 ```
 
-## Recommended development workflow
+The formatter must not produce:
 
-Before editing:
+```sql
+-- Explanation for the next column. CAST('-200' AS CHAR(20)) AS MSG_TP_CD
+```
+
+because that makes SQL appear after the comment.
+
+### CASE expressions
+
+CASE blocks should be formatted consistently:
+
+```sql
+CASE
+  WHEN CONDITION_1 THEN VALUE_1
+  WHEN CONDITION_2 THEN VALUE_2
+  ELSE VALUE_3
+END AS SOME_ALIAS
+```
+
+Nested CASE expressions inside aggregate functions should preserve readable indentation:
+
+```sql
+SUM(CASE
+      WHEN CONDITION_1 THEN AMOUNT
+      ELSE 0
+    END) AS TOTAL_AMOUNT
+```
+
+### WHERE alignment
+
+Logical operators should align predictably:
+
+```sql
+ WHERE A.STATUS = 'OPEN'
+   AND A.TYPE <> 'TEST'
+    OR A.TYPE IS NULL
+```
+
+`AND` and `OR` use different leading spaces so the condition text aligns.
+
+### JOIN alignment
+
+JOIN clauses should align with the SELECT body clause column:
+
+```sql
+  FROM SOME_TABLE A
+  LEFT JOIN OTHER_TABLE B ON B.ID = A.ID
+ INNER JOIN THIRD_TABLE C ON C.ID = A.ID
+```
+
+For nested queries, the same layout applies with added left indentation.
+
+## Test workflow
+
+Before changing formatter logic:
 
 ```powershell
 git status
 ```
 
-After editing:
+Run the regression check:
 
 ```powershell
 .\format.ps1 -check
 ```
 
-If the formatter behavior intentionally changed, review the new output carefully. Then regenerate expected outputs:
+After changing formatter behavior, inspect output carefully.
+
+If the behavior change is intentional, regenerate expected outputs:
 
 ```powershell
 .\format.ps1 -runall
 ```
 
-Run the check again:
+Then run:
 
 ```powershell
 .\format.ps1 -check
@@ -395,25 +492,38 @@ Commit:
 
 ```powershell
 git add .
-git commit -m "Describe the change"
+git commit -m "Describe the formatter change"
 git push
 ```
 
-Every meaningful project change should be reflected in this README when it affects usage, setup, workflow, behavior, or project direction.
+## Recommended development process
+
+Keep changes small.
+
+Each formatter change should target one bug:
+
+1. Identify the smallest failing SQL block.
+2. Add or update a test.
+3. Patch only the relevant function.
+4. Run `.\format.ps1 -check`.
+5. Review output manually.
+6. Commit only when the output is better.
+
+Avoid large rewrites unless they are done on a separate branch.
 
 ## Public repository hygiene
 
-Before pushing public changes, avoid committing:
+Before pushing to GitHub, avoid committing:
 
 - personal Windows paths,
 - usernames,
 - passwords,
 - API keys,
 - tokens,
-- real database connection strings,
+- real connection strings,
 - private company SQL,
 - local scratch files,
-- generated scratch outputs such as `*.formatted.sql`.
+- generated temporary outputs.
 
 Useful scan commands:
 
@@ -425,18 +535,44 @@ Get-ChildItem -Recurse -File | Select-String -Pattern "C:\\Users\\"
 Get-ChildItem -Recurse -File | Select-String -Pattern "password|passwd|pwd|secret|apikey|api_key|connectionstring|connection string|server=|user id=|uid=|trusted_connection"
 ```
 
-Email-like test data such as `'A@B.COM'` is fine when it is fake sample data.
+Generated local outputs such as:
+
+```text
+*.formatted.sql
+```
+
+should usually stay out of commits unless they are intentionally part of tests.
+
+## Suggested `.gitignore` entries
+
+```gitignore
+# Generated formatter outputs
+*.formatted.sql
+
+# Temporary files
+*.tmp
+*.bak
+
+# PowerShell temporary/debug files
+*.ps1xml.tmp
+
+# Local editor files
+.vscode/
+.idea/
+```
+
+Add exceptions if you intentionally want to commit editor configuration.
 
 ## Roadmap
 
-Planned improvement areas:
+Planned next steps:
 
-1. Stabilize the recursive DB2 formatter rewrite.
-2. Add more DB2 regression tests based on real formatting edge cases.
-3. Add `sqlfmt --check --file <test>` support if not already present locally.
-4. Improve DBeaver setup documentation with screenshots.
-5. Add configurable formatting options.
-6. Build a standalone UI/UX app that uses the same formatter core.
+1. Stabilize formatter behavior around real DB2 CTEs, comments, CASE expressions, and WHERE alignment.
+2. Add regression tests for each bug fixed.
+3. Improve DBeaver setup documentation with screenshots.
+4. Improve the standalone GUI gradually.
+5. Add formatting options only after the default formatter behavior is stable.
+6. Consider a more complete desktop app later, after the formatter core is reliable.
 
 ## License / Usage
 
