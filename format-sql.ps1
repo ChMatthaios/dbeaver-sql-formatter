@@ -703,7 +703,7 @@ function Format-WithStatement {
         if ($closeIndex -lt 0) { break }
 
         $inner = $body.Substring($openIndex + 1, $closeIndex - $openIndex - 1).Trim()
-        $innerLines = @(Format-SqlStatement -Statement $inner -Indent ($Indent + 5) -NoSemicolon)
+        $innerLines = @(Format-SqlStatement -Statement $inner -Indent ($Indent + 7) -NoSemicolon)
 
         if ($cteIndex -eq 0) {
             $out.Add($prefix + "WITH " + $cteName)
@@ -1322,7 +1322,12 @@ function Format-SqlText {
 
     $result = ($allLines -join [Environment]::NewLine)
     $result = Restore-ProtectedTokens $result
-    return $result.TrimEnd() + [Environment]::NewLine
+    
+    # Do not force a trailing newline.
+    # DBeaver may format only the current SQL statement and leave the blank lines
+    # after it untouched. If the formatter always returns an extra newline, repeated
+    # formatting can keep adding blank lines below the statement.
+    return $result.TrimEnd()
 }
 
 $inputSql = [Console]::In.ReadToEnd()
