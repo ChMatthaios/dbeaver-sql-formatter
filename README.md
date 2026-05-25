@@ -30,8 +30,6 @@ dbeaver-sql-formatter/
 ├─ format-sql.ps1
 ├─ format.ps1
 ├─ format-file.ps1
-├─ sqlfmt-gui.ps1
-├─ sqlfmt-gui.cmd
 ├─ scripts/
 │  └─ install-sqlfmt-command.ps1
 ├─ examples/
@@ -191,59 +189,6 @@ sqlfmt --help
 ```
 
 Do not document or recommend a generic command named `format`. It can conflict with other PowerShell functions, aliases, or Windows commands. Use `sqlfmt`.
-
-## Standalone GUI usage
-
-The standalone GUI is useful when you want a small app outside DBeaver.
-
-Run:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\sqlfmt-gui.ps1
-```
-
-If Windows blocks the script because it came from the internet, unblock it:
-
-```powershell
-Unblock-File .\sqlfmt-gui.ps1
-```
-
-Then run again:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\sqlfmt-gui.ps1
-```
-
-If `sqlfmt-gui.cmd` exists, you can run:
-
-```powershell
-.\sqlfmt-gui.cmd
-```
-
-or double-click:
-
-```text
-sqlfmt-gui.cmd
-```
-
-The GUI currently supports:
-
-- paste SQL,
-- open SQL file,
-- format,
-- copy output,
-- save output,
-- replace opened input file,
-- clear,
-- status messages.
-
-The GUI calls:
-
-```text
-format-sql.ps1
-```
-
-from the same repository folder.
 
 ## DBeaver setup
 
