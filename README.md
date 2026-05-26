@@ -9,7 +9,7 @@ format-sql.ps1 is the formatter engine.
 Everything else is a wrapper, runner, helper, or UI around it.
 ```
 
-The formatter reads SQL from **stdin** and writes formatted SQL to **stdout**. That makes it usable from DBeaver, PowerShell, file runners, and the standalone GUI.
+The formatter reads SQL from **stdin** and writes formatted SQL to **stdout**. That makes it usable from DBeaver, PowerShell, and file runners.
 
 ---
 
@@ -43,9 +43,6 @@ dbeaver-sql-formatter/
 ├─ format-sql.ps1
 ├─ format.ps1
 ├─ format-file.ps1
-├─ sqlfmt-app.ps1
-├─ sqlfmt-app.cmd
-├─ sqlfmt-settings.json
 ├─ scripts/
 │  └─ install-sqlfmt-command.ps1
 ├─ examples/
@@ -58,12 +55,9 @@ dbeaver-sql-formatter/
 
 | File | Purpose |
 |---|---|
-| `format-sql.ps1` | The actual formatter engine. DBeaver, CLI, file runner, and GUI should all call this. |
+| `format-sql.ps1` | The actual formatter engine. DBeaver, CLI, and file runner, should all call this. |
 | `format.ps1` | Development/test runner. Used for `-list`, `-runall`, `-check`, and test file formatting. |
 | `format-file.ps1` | File-based runner for formatting a `.sql` file directly. |
-| `sqlfmt-app.ps1` | Standalone WPF GUI wrapper. It does not contain formatter logic. |
-| `sqlfmt-app.cmd` | Double-click / simple command launcher for the GUI. |
-| `sqlfmt-settings.json` | Project-local sample/default settings file if present. Per-user GUI settings are stored under `%APPDATA%`. |
 | `scripts/install-sqlfmt-command.ps1` | Optional installer for a PowerShell command named `sqlfmt`. |
 | `tests/` | Regression test input SQL files. |
 | `tests_out/` | Expected formatted outputs for regression checks. |
@@ -106,24 +100,6 @@ format-sql.ps1
 tests_out/*.out.sql
 ```
 
-### GUI flow
-
-```text
-sqlfmt-app.cmd
-   ↓ launches
-sqlfmt-app.ps1
-   ↓ calls
-format-sql.ps1
-   ↓
-formatted output shown in the GUI
-```
-
-The GUI, DBeaver, `format-file.ps1`, and `format.ps1` should all use the same formatter engine:
-
-```text
-format-sql.ps1
-```
-
 ---
 
 ## Requirements
@@ -132,21 +108,6 @@ format-sql.ps1
 - Windows PowerShell
 - DBeaver, if using the DBeaver integration
 - Git, if contributing/pushing changes
-- WPF support for the GUI, available on normal Windows PowerShell installations
-
-For the GUI, prefer Windows PowerShell:
-
-```powershell
-powershell
-```
-
-not necessarily PowerShell Core:
-
-```powershell
-pwsh
-```
-
-because the GUI uses WPF assemblies.
 
 ---
 
@@ -252,199 +213,6 @@ Avoid using a generic command named `format` in public documentation. It may con
 
 ---
 
-## Standalone GUI usage
-
-The standalone GUI is:
-
-```text
-sqlfmt-app.ps1
-```
-
-The launcher is:
-
-```text
-sqlfmt-app.cmd
-```
-
-Both files should live in the repository root, next to `format-sql.ps1`.
-
-### Start the GUI
-
-From the repository root:
-
-```powershell
-.\sqlfmt-app.cmd
-```
-
-or:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\sqlfmt-app.ps1
-```
-
-### GUI features
-
-The GUI currently supports:
-
-- paste SQL,
-- open SQL file,
-- format,
-- copy formatted output,
-- save formatted output,
-- replace opened input file,
-- clear,
-- dark/light theme,
-- settings window,
-- status messages,
-- visible formatter path.
-
-### GUI rule
-
-The GUI does **not** contain SQL formatting logic.
-
-It calls:
-
-```text
-format-sql.ps1
-```
-
-through stdin/stdout.
-
-If the GUI and DBeaver ever format differently, check that both are using the same `format-sql.ps1` and the same SQL input.
-
----
-
-## GUI settings
-
-The GUI stores per-user settings here:
-
-```text
-%APPDATA%\SQLFMT\settings.json
-```
-
-These settings are specific to the current Windows user.
-
-Current settings include:
-
-- theme,
-- formatter profile,
-- max line length,
-- indent size,
-- tabs/spaces preference,
-- keyword casing,
-- comma style,
-- SELECT column style,
-- JOIN alignment,
-- WHERE alignment,
-- CASE style,
-- comment line boundary preservation.
-
-Important:
-
-```text
-The GUI can save these settings now, but not every setting is wired into format-sql.ps1 yet.
-```
-
-Formatter options should be connected gradually, one setting at a time, so the formatter stays stable.
-
----
-
-## GUI troubleshooting / workaround if it does not open
-
-### 1. Make sure the files are in the right place
-
-These files should be in the same folder:
-
-```text
-format-sql.ps1
-sqlfmt-app.ps1
-sqlfmt-app.cmd
-```
-
-If `sqlfmt-app.ps1` cannot find `format-sql.ps1`, the GUI will show an error.
-
-### 2. Run from PowerShell to see errors
-
-Instead of double-clicking, run:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\sqlfmt-app.ps1
-```
-
-This makes errors easier to see.
-
-### 3. Unblock the script
-
-If Windows says the script is blocked or not digitally signed:
-
-```powershell
-Unblock-File .\sqlfmt-app.ps1
-```
-
-Then run:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\sqlfmt-app.ps1
-```
-
-### 4. Check execution policy
-
-If it still does not open:
-
-```powershell
-Get-ExecutionPolicy -List
-```
-
-A strict machine/user policy can block scripts. The normal workaround is to run with:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\sqlfmt-app.ps1
-```
-
-### 5. Use the `.cmd` launcher
-
-If the script opens correctly through PowerShell, use:
-
-```powershell
-.\sqlfmt-app.cmd
-```
-
-or double-click:
-
-```text
-sqlfmt-app.cmd
-```
-
-The `.cmd` launcher runs:
-
-```bat
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0sqlfmt-app.ps1"
-```
-
-### 6. WPF / PowerShell issue
-
-The GUI uses WPF assemblies:
-
-```text
-PresentationFramework
-PresentationCore
-WindowsBase
-```
-
-Use Windows PowerShell on Windows. If you run it with an environment that does not support WPF, the GUI will not open.
-
-### 7. Reset GUI settings
-
-If the settings file becomes corrupted, delete:
-
-```text
-%APPDATA%\SQLFMT\settings.json
-```
-
-Then reopen the GUI. It will recreate the file with defaults.
-
----
-
 ## DBeaver setup
 
 The formatter is designed to work as an external formatter in DBeaver.
@@ -520,15 +288,6 @@ For reliable results with large CTEs or multi-statement scripts, select the full
 
 ## DBeaver troubleshooting
 
-### DBeaver and GUI output differ
-
-Check:
-
-1. DBeaver points to the same `format-sql.ps1` as the GUI.
-2. The GUI is in the same folder as the same `format-sql.ps1`.
-3. You selected the full query in DBeaver.
-4. DBeaver is not accidentally pointing to `format.ps1`, `format-file.ps1`, or another old copy.
-
 DBeaver should call:
 
 ```text
@@ -540,7 +299,6 @@ not:
 ```text
 format.ps1
 format-file.ps1
-sqlfmt-app.ps1
 ```
 
 ### PowerShell blocks the formatter
@@ -783,11 +541,9 @@ Planned next steps:
 
 1. Stabilize formatter behavior around real DB2 CTEs, comments, CASE expressions, and WHERE alignment.
 2. Add regression tests for each bug fixed.
-3. Wire GUI settings into `format-sql.ps1` gradually.
-4. Improve DBeaver setup documentation with screenshots.
-5. Improve the standalone GUI gradually.
-6. Add formatting options only after the default formatter behavior is stable.
-7. Consider a packaged desktop app later, after the formatter core is reliable.
+3. Improve DBeaver setup documentation with screenshots.
+4. Add formatting options only after the default formatter behavior is stable.
+5. Consider a packaged desktop app later, after the formatter core is reliable.
 
 ---
 

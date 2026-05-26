@@ -20,6 +20,8 @@ $script:ProtectedIndex = 0
 #
 # Keep defaults safe so DBeaver/CLI still work even if the GUI was never opened.
 $script:MaxLineLength = 120
+$script:IndentSize = 2
+$script:KeywordCasing = "Uppercase"
 
 function Load-SqlfmtSettings {
     $settingsPath = Join-Path (Join-Path $env:APPDATA "SQLFMT") "settings.json"
@@ -38,12 +40,36 @@ function Load-SqlfmtSettings {
                 $script:MaxLineLength = $value
             }
         }
+
+        if ($settings.PSObject.Properties.Name -contains "indentSize") {
+            $value = [int]$settings.indentSize
+
+            if ($value -eq 2 -or $value -eq 4) {
+                $script:IndentSize = $value
+            }
+        }
+
+        if ($settings.PSObject.Properties.Name -contains "keywordCasing") {
+            $value = [string]$settings.keywordCasing
+
+            if ($value -in @("Uppercase", "Lowercase", "Preserve")) {
+                $script:KeywordCasing = $value
+            }
+        }
     }
     catch {
         # If settings are missing/corrupted, silently use defaults.
         # The formatter must never fail just because UI settings are invalid.
         $script:MaxLineLength = 120
+        $script:IndentSize = 2
+        $script:KeywordCasing = "Uppercase"
     }
+}
+
+function Get-Indent {
+    param([int]$Level = 1)
+
+    return ' ' * ($script:IndentSize * $Level)
 }
 
 Load-SqlfmtSettings
@@ -146,6 +172,10 @@ function Normalize-Space {
 function Convert-SqlKeywordsToUpper {
     param([string]$Sql)
 
+    if ($script:KeywordCasing -eq "Preserve") {
+        return $Sql
+    }
+
     $keywords = @(
         'select', 'from', 'where', 'and', 'or', 'not', 'null', 'is', 'in', 'exists', 'between', 'like',
         'inner', 'left', 'right', 'full', 'cross', 'outer', 'join', 'on', 'group', 'by', 'having', 'order',
@@ -165,7 +195,15 @@ function Convert-SqlKeywordsToUpper {
         $Sql = [regex]::Replace(
             $Sql,
             "(?i)(?<![A-Z0-9_])$escaped(?![A-Z0-9_])",
-            { param($m) $m.Value.ToUpperInvariant() }
+            {
+                param($m)
+                        
+                if ($script:KeywordCasing -eq "Lowercase") {
+                    return $m.Value.ToLowerInvariant()
+                }
+            
+                return $m.Value.ToUpperInvariant()
+            }
         )
     }
 
