@@ -14,6 +14,40 @@ $ErrorActionPreference = "Stop"
 $script:ProtectedMap = @{}
 $script:ProtectedIndex = 0
 
+# Default formatter settings.
+# These can be overridden by the GUI settings file:
+#   %APPDATA%\SQLFMT\settings.json
+#
+# Keep defaults safe so DBeaver/CLI still work even if the GUI was never opened.
+$script:MaxLineLength = 120
+
+function Load-SqlfmtSettings {
+    $settingsPath = Join-Path (Join-Path $env:APPDATA "SQLFMT") "settings.json"
+
+    if (-not (Test-Path $settingsPath)) {
+        return
+    }
+
+    try {
+        $settings = Get-Content -Path $settingsPath -Raw | ConvertFrom-Json
+
+        if ($settings.PSObject.Properties.Name -contains "maxLineLength") {
+            $value = [int]$settings.maxLineLength
+
+            if ($value -ge 40 -and $value -le 300) {
+                $script:MaxLineLength = $value
+            }
+        }
+    }
+    catch {
+        # If settings are missing/corrupted, silently use defaults.
+        # The formatter must never fail just because UI settings are invalid.
+        $script:MaxLineLength = 120
+    }
+}
+
+Load-SqlfmtSettings
+
 function New-ProtectedToken {
     param([string]$Prefix, [string]$Value)
 
@@ -470,7 +504,7 @@ function Format-WindowExpression {
     $out = New-Object System.Collections.Generic.List[string]
     $item = Normalize-Space $Item
 
-    if ($item.Length -le 120 -or $item -notmatch '\bOVER\s*\(') {
+    if ($item.Length -le $script:MaxLineLength -or $item -notmatch '\bOVER\s*\(') {
         $out.Add($FirstPrefix + $item)
         return $out
     }
@@ -586,7 +620,7 @@ function Format-SelectList {
                 }
             }
         }
-        elseif ($item -match '\bOVER\s*\(' -and $item.Length -gt 120) {
+        elseif ($item -match '\bOVER\s*\(' -and $item.Length -gt $script:MaxLineLength) {
             $winLines = @(Format-WindowExpression -Item $item -FirstPrefix $prefix -NextPrefix $nextPrefix)
             for ($j = 0; $j -lt $winLines.Count; $j++) {
                 if ($j -eq $winLines.Count - 1) {
@@ -1147,7 +1181,7 @@ function Format-CreateIndexStatement {
 
     $out.Add($prefix + $head)
 
-    if (($prefix + "    " + $tail).Length -le 120) {
+    if (($prefix + "    " + $tail).Length -le $script:MaxLineLength) {
         $out.Add($prefix + "    " + $tail)
         return $out
     }
@@ -1196,7 +1230,7 @@ function Format-AlterTableStatement {
     $Sql = Normalize-Space (Strip-TrailingSemicolon $Sql)
     $prefix = ' ' * $Indent
 
-    if (($prefix + $Sql).Length -le 120) {
+    if (($prefix + $Sql).Length -le $script:MaxLineLength) {
         return @($prefix + $Sql)
     }
 
