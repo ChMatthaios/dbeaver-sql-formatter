@@ -23,11 +23,3 @@ desktop.ini
 # Local scratch files
 temp_*.sql
 *.scratch.sql
-
-# Optional: generated formatter outputs
-# Keep this commented for now because your tests_out folder is currently useful.
-# tests_out/
-*.out.sql
-
-# Generated example outputs
-*.formatted.sql
