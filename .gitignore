@@ -25,5 +25,9 @@ temp_*.sql
 *.scratch.sql
 
 # test out files
+*-out.sql
 *.out.sql
+*-output.sql
+*.output.sql
+*-formatted.sql
 *.formatted.sql
