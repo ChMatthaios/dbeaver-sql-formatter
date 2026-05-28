@@ -283,7 +283,7 @@ Arguments:
 Example:
 
 ```text
--NoProfile -ExecutionPolicy Bypass -File "C:\Users\v-mchouliaras\Desktop\dbeaver-sql-formatter\format-sql.ps1"
+-NoProfile -ExecutionPolicy Bypass -File "C:\Users\[User]\Desktop\dbeaver-sql-formatter\format-sql.ps1"
 ```
 
 ### Step 4 — Save and test
