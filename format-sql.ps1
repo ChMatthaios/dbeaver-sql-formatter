@@ -340,7 +340,13 @@ function Add-IndentedLines {
 function Strip-TrailingSemicolon {
     param([string]$Text)
 
-    return ($Text.Trim() -replace ';\s*$', '')
+    # Remove all trailing semicolons.
+    # This prevents input like:
+    #   WITH UR;;
+    # from becoming:
+    #   WITH UR;;
+    # again after the formatter adds one semicolon back.
+    return ($Text.Trim() -replace ';+\s*$', '')
 }
 
 function Remove-LeadingProtectedCommentsForDetection {
@@ -732,12 +738,136 @@ function Get-SelectClauses {
     return $clauses
 }
 
+function Format-JoinClause {
+    param(
+        [string]$JoinText,
+        [string]$Prefix,
+        [int]$JoinPad
+    )
+
+    $out = New-Object System.Collections.Generic.List[string]
+    $joinText = Normalize-Space $JoinText
+
+    # If the JOIN line fits, keep it as one line.
+    if (($Prefix + (' ' * $JoinPad) + $joinText).Length -le $script:MaxLineLength) {
+        $out.Add($Prefix + (' ' * $JoinPad) + $joinText)
+        return $out
+    }
+
+    # Long JOINs usually become unreadable because the ON condition is too long.
+    # Split only at top-level ON, then format ON / AND / OR predicates below it.
+    $onMatch = Get-FirstTopLevelMatch -Text $joinText -Pattern '\bON\b'
+
+    if ($null -eq $onMatch) {
+        $out.Add($Prefix + (' ' * $JoinPad) + $joinText)
+        return $out
+    }
+
+    $joinHead = Normalize-Space $joinText.Substring(0, $onMatch.Index)
+    $onText = Normalize-Space $joinText.Substring($onMatch.Index + $onMatch.Length)
+
+    $out.Add($Prefix + (' ' * $JoinPad) + $joinHead)
+
+    $parts = @(Split-TopLevelLogical $onText)
+
+    for ($i = 0; $i -lt $parts.Count; $i++) {
+        $part = Normalize-Space $parts[$i]
+
+        if ($i -eq 0) {
+            $out.Add($Prefix + "    ON " + $part)
+        }
+        elseif ($part -match '^(AND|OR)\s+(.+)$') {
+            $logicalOperator = $matches[1].ToUpperInvariant()
+            $condition = $matches[2]
+
+            if ($logicalOperator -eq "AND") {
+                $out.Add($Prefix + "   AND " + $condition)
+            }
+            else {
+                $out.Add($Prefix + "    OR " + $condition)
+            }
+        }
+        else {
+            $out.Add($Prefix + "   AND " + $part)
+        }
+    }
+
+    return $out
+}
+
 function Format-FromClause {
     param([string]$Text, [int]$Indent)
 
     $out = New-Object System.Collections.Generic.List[string]
     $prefix = ' ' * $Indent
-    $joinPattern = '\b(INNER\s+JOIN|LEFT\s+JOIN|LEFT\s+OUTER\s+JOIN|RIGHT\s+JOIN|RIGHT\s+OUTER\s+JOIN|FULL\s+JOIN|FULL\s+OUTER\s+JOIN|CROSS\s+JOIN|JOIN)\b'
+
+    # FROM-subquery handling.
+    #
+    # If the FROM source is:
+    #
+    #   FROM (SELECT ...) A
+    #
+    # do not keep the inner SELECT on one long line. Format the inner SELECT with
+    # the same recursive formatter used everywhere else, then close the parenthesis
+    # on the last inner line.
+    #
+    # Target shape:
+    #
+    #   FROM ( SELECT ...
+    #                  ...
+    #            FROM ...
+    #           WHERE ... ) A
+    $fromText = $Text.Trim()
+
+    if ($fromText.StartsWith("(")) {
+        $closeIndex = Find-MatchingParen -Text $fromText -OpenIndex 0
+
+        if ($closeIndex -gt 0) {
+            $inner = $fromText.Substring(1, $closeIndex - 1).Trim()
+            $alias = Normalize-Space $fromText.Substring($closeIndex + 1)
+
+            if ($inner -match '^\s*(SELECT|WITH)\b') {
+                # "  FROM ( " is 9 characters, so following inner lines start under
+                # the first SELECT column position.
+                $innerLines = @(Format-SqlStatement -Statement $inner -Indent ($Indent + 9) -NoSemicolon)
+
+                if ($innerLines.Count -gt 0) {
+                    $out.Add($prefix + "  FROM ( " + $innerLines[0].Trim())
+
+                    for ($i = 1; $i -lt $innerLines.Count; $i++) {
+                        $out.Add($innerLines[$i])
+                    }
+
+                    $lastIndex = $out.Count - 1
+                    $out[$lastIndex] = $out[$lastIndex].TrimEnd() + " )" + $(if ($alias.Length -gt 0) { " " + $alias } else { "" })
+                }
+                else {
+                    $out.Add($prefix + "  FROM ( )" + $(if ($alias.Length -gt 0) { " " + $alias } else { "" }))
+                }
+
+                return $out
+            }
+        }
+    }
+
+    # JOIN formatting rule:
+    #
+    #   FROM CUSTOMER C
+    #  INNER JOIN ORDER_HEADER O ...
+    #   LEFT JOIN CUSTOMER_ADDRESS A ...
+    #
+    # Important:
+    # Only emit:
+    #   1. the base FROM table text before the first JOIN
+    #   2. each JOIN segment starting exactly at its JOIN keyword
+    #
+    # Do NOT re-emit the original full FROM body, otherwise output becomes:
+    #   FROM CUSTOMER C
+    #  INNER JOIN ...
+    # CUSTOMER C INNER JOIN ... LEFT JOIN ...
+    #
+    # Longer JOIN keywords must appear before shorter ones.
+    $joinPattern = '\b(LEFT\s+OUTER\s+JOIN|RIGHT\s+OUTER\s+JOIN|FULL\s+OUTER\s+JOIN|INNER\s+JOIN|LEFT\s+JOIN|RIGHT\s+JOIN|FULL\s+JOIN|CROSS\s+JOIN|JOIN)\b'
     $matches = @(Get-TopLevelMatches -Text $Text -Pattern $joinPattern)
 
     if ($matches.Count -eq 0) {
@@ -745,20 +875,35 @@ function Format-FromClause {
         return $out
     }
 
-    $first = $Text.Substring(0, $matches[0].Index).Trim()
-    $out.Add($prefix + "  FROM " + (Normalize-Space $first))
+    # Base table/source before the first JOIN.
+    $firstSource = Normalize-Space $Text.Substring(0, $matches[0].Index)
+
+    if ($firstSource.Length -gt 0) {
+        $out.Add($prefix + "  FROM " + $firstSource)
+    }
 
     for ($i = 0; $i -lt $matches.Count; $i++) {
         $m = $matches[$i]
-        $next = if ($i -lt $matches.Count - 1) { $matches[$i + 1].Index } else { $Text.Length }
-        $joinText = Normalize-Space $Text.Substring($m.Index, $next - $m.Index)
-        # Align JOIN clauses with the SELECT body clauses.
-        # FROM is emitted as:
-        #   "  FROM ..."
-        #
-        # JOIN should start in the same clause column:
-        #   "  LEFT JOIN ..."
-        $out.Add($prefix + "  " + $joinText)
+        $nextIndex = if ($i -lt $matches.Count - 1) { $matches[$i + 1].Index } else { $Text.Length }
+
+        # This segment starts at INNER/LEFT/JOIN/etc., never at the original FROM source.
+        $joinText = Normalize-Space $Text.Substring($m.Index, $nextIndex - $m.Index)
+
+        # Extract the first word to align:
+        #   INNER JOIN -> INNER
+        #   LEFT JOIN  -> LEFT
+        #   JOIN       -> JOIN
+        $firstWord = ($joinText -split '\s+', 2)[0].ToUpperInvariant()
+
+        # Right-align common JOIN starts to a 6-character clause column:
+        # " INNER" = 6 chars
+        # "  LEFT" = 6 chars
+        # "  JOIN" = 6 chars
+        $joinPad = [Math]::Max(1, 6 - $firstWord.Length)
+
+        Add-IndentedLines -Out $out -Lines @(
+            Format-JoinClause -JoinText $joinText -Prefix $prefix -JoinPad $joinPad
+        ) -Indent 0
     }
 
     return $out
@@ -922,12 +1067,29 @@ function Format-WithStatement {
         $pos = $closeIndex + 1
         while ($pos -lt $body.Length -and [char]::IsWhiteSpace($body[$pos])) { $pos++ }
 
-        if ($pos -lt $body.Length -and $body[$pos] -eq ',') {
-            $out.Add($prefix + "     ),")
-            $pos++
+        # Put the CTE closing parenthesis on the same line as the last SQL text.
+        # The next CTE already starts with:
+        #   , CTE_NAME
+        # so we must NOT also add a comma after the closing parenthesis.
+        #
+        # This prevents:
+        #   ),
+        # , NEXT_CTE
+        #
+        # and produces:
+        #   ... LAST_CTE_LINE )
+        # , NEXT_CTE
+        if ($out.Count -gt 0) {
+            $out[$out.Count - 1] = $out[$out.Count - 1].TrimEnd() + " )"
         }
         else {
             $out.Add($prefix + "     )")
+        }
+
+        if ($pos -lt $body.Length -and $body[$pos] -eq ',') {
+            $pos++
+        }
+        else {
             break
         }
 
@@ -966,9 +1128,9 @@ function Format-InsertStatement {
         if ($open -ge 0 -and $close -gt $open) {
             $before = Normalize-Space $head.Substring(0, $open)
             $cols = $head.Substring($open + 1, $close - $open - 1)
-            $out.Add($prefix + $before + " (")
-            Add-IndentedLines -Out $out -Lines @(Format-CommaList -Text $cols -FirstPrefix ($prefix + "    ") -NextPrefix ($prefix + "    ")) -Indent 0
-            $out.Add($prefix + ")")
+            Add-IndentedLines -Out $out -Lines @(
+                Format-InlineParenCommaList -Keyword ($before + " ") -Text $cols -Prefix $prefix
+            ) -Indent 0
         }
         else {
             $out.Add($prefix + $head)
@@ -999,9 +1161,9 @@ function Format-InsertStatement {
             $end = Find-MatchingParen -Text $values -OpenIndex 0
             if ($end -gt 0) {
                 $valText = $values.Substring(1, $end - 1)
-                $out.Add($prefix + "VALUES (")
-                Add-IndentedLines -Out $out -Lines @(Format-CommaList -Text $valText -FirstPrefix ($prefix + "    ") -NextPrefix ($prefix + "    ")) -Indent 0
-                $out.Add($prefix + ")")
+                Add-IndentedLines -Out $out -Lines @(
+                    Format-InlineParenCommaList -Keyword "VALUES " -Text $valText -Prefix $prefix
+                ) -Indent 0
                 return $out
             }
         }
@@ -1080,13 +1242,27 @@ function Format-InlineParenCommaList {
         return $out
     }
 
-    $continuation = ' ' * ($Keyword.Length + 1)
+    # If the whole parenthesized list fits inside 120 chars, keep it on one line.
+    # Example:
+    #   INSERT INTO T (A, B, C)
+    #
+    # If it does not fit, break after the opening parenthesis and align every
+    # item under the first item.
+    $oneLineText = ($items -join ', ')
+    $oneLine = $Prefix + $Keyword + "( " + $oneLineText + " )"
+
+    if ($oneLine.Length -le 120) {
+        $out.Add($oneLine)
+        return $out
+    }
+
+    $continuation = ' ' * ($Keyword.Length + 2)
 
     for ($i = 0; $i -lt $items.Count; $i++) {
-        $suffix = if ($i -lt $items.Count - 1) { "," } else { ")" }
+        $suffix = if ($i -lt $items.Count - 1) { "," } else { " )" }
 
         if ($i -eq 0) {
-            $out.Add($Prefix + $Keyword + "(" + $items[$i] + $suffix)
+            $out.Add($Prefix + $Keyword + "( " + $items[$i] + $suffix)
         }
         else {
             $out.Add($Prefix + $continuation + $items[$i] + $suffix)
@@ -1172,6 +1348,63 @@ function Format-MergeStatement {
     return $out
 }
 
+function Format-CreateTableAsStatement {
+    param([string]$Sql, [int]$Indent = 0)
+
+    $Sql = Normalize-Space (Strip-TrailingSemicolon $Sql)
+    $prefix = ' ' * $Indent
+    $out = New-Object System.Collections.Generic.List[string]
+
+    # Handles DB2 CTAS:
+    #
+    #   CREATE TABLE ABCD.EFGH AS (SELECT ...)
+    #   WITH DATA
+    #
+    #   CREATE TABLE ABCD.EFGH AS (WITH ... SELECT ...)
+    #   WITH NO DATA
+    #
+    # The parenthesized part is a query, not a column-definition list.
+    $asMatch = Get-FirstTopLevelMatch -Text $Sql -Pattern '\bAS\s*\('
+
+    if ($null -eq $asMatch) {
+        $out.Add($prefix + $Sql)
+        return $out
+    }
+
+    $openIndex = $Sql.IndexOf('(', $asMatch.Index)
+    if ($openIndex -lt 0) {
+        $out.Add($prefix + $Sql)
+        return $out
+    }
+
+    $closeIndex = Find-MatchingParen -Text $Sql -OpenIndex $openIndex
+    if ($closeIndex -lt 0) {
+        $out.Add($prefix + $Sql)
+        return $out
+    }
+
+    $head = Normalize-Space $Sql.Substring(0, $openIndex)
+    $inner = $Sql.Substring($openIndex + 1, $closeIndex - $openIndex - 1).Trim()
+    $tail = Normalize-Space $Sql.Substring($closeIndex + 1)
+
+    $out.Add($prefix + $head + " (")
+
+    if ($inner -match '^\s*(SELECT|WITH)\b') {
+        Add-IndentedLines -Out $out -Lines @(Format-SqlStatement -Statement $inner -Indent ($Indent + 2) -NoSemicolon) -Indent 0
+    }
+    else {
+        $out.Add($prefix + "  " + (Normalize-Space $inner))
+    }
+
+    $out.Add($prefix + ")")
+
+    if ($tail.Length -gt 0) {
+        $out.Add($prefix + $tail)
+    }
+
+    return $out
+}
+
 function Format-CreateTableStatement {
     param([string]$Sql, [int]$Indent = 0)
 
@@ -1196,7 +1429,8 @@ function Format-CreateTableStatement {
     $tail = Normalize-Space $Sql.Substring($close + 1)
 
     $out.Add($prefix + $head + " (")
-    Add-IndentedLines -Out $out -Lines @(Format-CommaList -Text $body -FirstPrefix ($prefix + "    ") -NextPrefix ($prefix + "    ")) -Indent 0
+    # Table columns should be two spaces inside the CREATE TABLE parenthesis.
+    Add-IndentedLines -Out $out -Lines @(Format-CommaList -Text $body -FirstPrefix ($prefix + "  ") -NextPrefix ($prefix + "  ")) -Indent 0
     $out.Add($prefix + ")" + $(if ($tail.Length -gt 0) { " " + $tail } else { "" }))
     return $out
 }
@@ -1394,7 +1628,33 @@ function Format-RoutineBody {
         }
     }
 
-    return $out
+    # Add one blank line between top-level SQL PL statements.
+    # Keep this conservative:
+    # - add a blank line after statement-ending semicolons,
+    # - do not add a blank line right before END IF / END LOOP / END,
+    # - do not add duplicate blank lines.
+    $spacedOut = New-Object System.Collections.Generic.List[string]
+    
+    for ($i = 0; $i -lt $out.Count; $i++) {
+        $line = $out[$i]
+        $spacedOut.Add($line)
+    
+        if ($i -ge $out.Count - 1) {
+            continue
+        }
+    
+        $nextLine = $out[$i + 1].Trim()
+    
+        if (
+            $line.TrimEnd().EndsWith(";") -and
+            $nextLine.Length -gt 0 -and
+            $nextLine -notmatch '^(END IF|END LOOP|END|ELSE)\b'
+        ) {
+            $spacedOut.Add("")
+        }
+    }
+    
+    return $spacedOut
 }
 
 function Format-GenericStatement {
@@ -1471,6 +1731,9 @@ function Format-SqlStatement {
     }
     elseif ($upper -match '^CREATE\s+INDEX\b') {
         Add-IndentedLines -Out $out -Lines @(Format-CreateIndexStatement -Sql $bodyNoSemi -Indent $Indent) -Indent 0
+    }
+    elseif ($upper -match '^CREATE\s+TABLE\b' -and $upper -match '\bAS\s*\(' -and $upper -match '\bWITH\s+(NO\s+)?DATA\b') {
+        Add-IndentedLines -Out $out -Lines @(Format-CreateTableAsStatement -Sql $bodyNoSemi -Indent $Indent) -Indent 0
     }
     elseif ($upper -match '^(CREATE\s+TABLE|DECLARE\s+GLOBAL\s+TEMPORARY\s+TABLE)\b') {
         Add-IndentedLines -Out $out -Lines @(Format-CreateTableStatement -Sql $bodyNoSemi -Indent $Indent) -Indent 0
