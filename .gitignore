@@ -23,3 +23,7 @@ desktop.ini
 # Local scratch files
 temp_*.sql
 *.scratch.sql
+
+# test out files
+*.out.sql
+*.formatted.sql
