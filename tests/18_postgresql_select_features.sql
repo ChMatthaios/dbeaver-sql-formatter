@@ -1,0 +1,1 @@
+select distinct on (c.id) c.id, c.payload->>'name' as name, c.score::numeric(10,2) as score from customer c where c.name ilike '%mat%' order by c.id, c.updated_at desc limit 20 offset 5 for update skip locked;
