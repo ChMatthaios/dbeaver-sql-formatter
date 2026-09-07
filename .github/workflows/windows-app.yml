@@ -35,6 +35,14 @@ jobs:
       - name: Test structural UI formatting
         shell: pwsh
         run: |
+          # Reproduce the app sample at the 80-column setting used for this layout.
+          @{
+            maxLineLength = 80
+            indentSize = 2
+            keywordCasing = 'Uppercase'
+            preserveCommentLineBoundaries = $true
+          } | ConvertTo-Json | Set-Content .\settings\settings.json
+
           $inputSql = Get-Content .\windows-app\test-data\structured-complex-db2.sql -Raw
           $actual = $inputSql |
             powershell -NoProfile -ExecutionPolicy Bypass -File .\format-ui.ps1 |
