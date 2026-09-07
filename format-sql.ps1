@@ -6,6 +6,7 @@
       - Stable DBeaver stdin -> stdout behavior.
       - IBM-style clause grid (SELECT / FROM / WHERE / AND / OR).
       - Recursive formatting for CTEs and subqueries where it is safe.
+      - Treat maxLineLength as the margin for each formatted SQL unit.
       - Compact short constructs; wrap only when readability or maxLineLength requires it.
       - Preserve strings, quoted identifiers and comments.
 
@@ -432,6 +433,164 @@ function Format-ParenthesizedSubqueries {
     return $work
 }
 
+function Wrap-ExpressionByWords {
+    param(
+        [string]$Text,
+        [string]$FirstPrefix,
+        [string]$ContinuationPrefix
+    )
+
+    $normalized = Normalize-Space $Text
+    if (-not $normalized) { return @($FirstPrefix.TrimEnd()) }
+
+    $words = @($normalized -split '\s+' | Where-Object { $_ })
+    $out = New-Object System.Collections.Generic.List[string]
+    $current = $FirstPrefix
+
+    foreach ($word in $words) {
+        $separator = if ($current.Length -gt $FirstPrefix.Length -or ($out.Count -gt 0 -and $current.Length -gt $ContinuationPrefix.Length)) { ' ' } else { '' }
+        if (($current + $separator + $word).Length -gt $script:MaxLineLength -and $current.Trim().Length -gt 0) {
+            $out.Add($current.TrimEnd())
+            $current = $ContinuationPrefix + $word
+        }
+        else {
+            $current += $separator + $word
+        }
+    }
+
+    if ($current.Trim().Length -gt 0) {
+        $out.Add($current.TrimEnd())
+    }
+    return $out
+}
+
+function Format-InListExpression {
+    param(
+        [string]$Text,
+        [string]$FirstPrefix
+    )
+
+    $normalized = Normalize-Space $Text
+    $m = [regex]::Match($normalized, '(?i)^(.*?\b(?:NOT\s+)?IN)\s*\(')
+    if (-not $m.Success) { return @() }
+
+    $open = $normalized.IndexOf('(', $m.Index + $m.Length - 1)
+    if ($open -lt 0) { return @() }
+    $close = Find-MatchingParen -Text $normalized -OpenIndex $open
+    if ($close -lt 0) { return @() }
+
+    $inner = $normalized.Substring($open + 1, $close - $open - 1).Trim()
+    if ($inner -match '^(?i)(SELECT|WITH)\b') { return @() }
+
+    $items = @(Split-TopLevelByComma $inner)
+    if ($items.Count -lt 2) { return @() }
+
+    $head = Normalize-Space $normalized.Substring(0, $open)
+    $tail = Normalize-Space $normalized.Substring($close + 1)
+    $start = $FirstPrefix + $head + ' ('
+    $continuation = ' ' * $start.Length
+    $out = New-Object System.Collections.Generic.List[string]
+    $current = $start
+
+    for ($i = 0; $i -lt $items.Count; $i++) {
+        $isLast = $i -eq $items.Count - 1
+        $piece = $items[$i] + $(if ($isLast) { ')' + $(if ($tail) { ' ' + $tail } else { '' }) } else { ',' })
+        $separator = if ($current.EndsWith('(')) { '' } else { ' ' }
+
+        if (($current + $separator + $piece).Length -gt $script:MaxLineLength -and -not $current.EndsWith('(')) {
+            $out.Add($current.TrimEnd())
+            $current = $continuation + $piece
+        }
+        elseif (($current + $separator + $piece).Length -gt $script:MaxLineLength -and $current.EndsWith('(')) {
+            $out.Add($current.TrimEnd())
+            $current = $continuation + $piece
+        }
+        else {
+            $current += $separator + $piece
+        }
+    }
+
+    if ($current.Trim().Length -gt 0) {
+        $out.Add($current.TrimEnd())
+    }
+    return $out
+}
+
+function Format-CaseExpression {
+    param(
+        [string]$Text,
+        [string]$FirstPrefix,
+        [string]$ContinuationPrefix
+    )
+
+    $item = Normalize-Space $Text
+    if ($item -notmatch '^(?i)CASE\b') {
+        return @($FirstPrefix + $item)
+    }
+
+    $m = [regex]::Match($item, '(?is)^CASE\b(.*)\bEND(\s+(?:AS\s+)?[A-Z0-9_]+)?\s*$')
+    if (-not $m.Success) {
+        return @(Wrap-ExpressionByWords -Text $item -FirstPrefix $FirstPrefix -ContinuationPrefix $ContinuationPrefix)
+    }
+
+    $body = Normalize-Space $m.Groups[1].Value
+    $alias = Normalize-Space $m.Groups[2].Value
+    $tokens = [regex]::Matches($body, '(?i)\bWHEN\b|\bELSE\b')
+    if ($tokens.Count -eq 0) {
+        return @(Wrap-ExpressionByWords -Text $item -FirstPrefix $FirstPrefix -ContinuationPrefix $ContinuationPrefix)
+    }
+
+    $selector = Normalize-Space $body.Substring(0, $tokens[0].Index)
+    $out = New-Object System.Collections.Generic.List[string]
+    $out.Add($FirstPrefix + 'CASE' + $(if ($selector) { ' ' + $selector } else { '' }))
+
+    $casePrefix = $ContinuationPrefix + (' ' * $script:IndentSize)
+    $caseContinuation = $casePrefix + (' ' * $script:IndentSize)
+    for ($i = 0; $i -lt $tokens.Count; $i++) {
+        $next = if ($i -lt $tokens.Count - 1) { $tokens[$i + 1].Index } else { $body.Length }
+        $segment = Normalize-Space $body.Substring($tokens[$i].Index, $next - $tokens[$i].Index)
+        foreach ($line in @(Wrap-ExpressionByWords -Text $segment -FirstPrefix $casePrefix -ContinuationPrefix $caseContinuation)) {
+            $out.Add($line)
+        }
+    }
+
+    $out.Add($ContinuationPrefix + 'END' + $(if ($alias) { ' ' + $alias } else { '' }))
+    return $out
+}
+
+function Format-ExpressionWithPrefix {
+    param(
+        [string]$Text,
+        [string]$FirstPrefix,
+        [string]$ContinuationPrefix,
+        [int]$Depth = 0
+    )
+
+    $expression = Format-ParenthesizedSubqueries -Text $Text -AbsolutePrefixLength $FirstPrefix.Length -Depth $Depth
+    if ($expression.Contains([Environment]::NewLine)) {
+        $lines = $expression -split [regex]::Escape([Environment]::NewLine)
+        $out = New-Object System.Collections.Generic.List[string]
+        $out.Add($FirstPrefix + $lines[0])
+        for ($i = 1; $i -lt $lines.Count; $i++) { $out.Add($lines[$i]) }
+        return $out
+    }
+
+    if (($FirstPrefix + $expression).Length -le $script:MaxLineLength) {
+        return @($FirstPrefix + $expression)
+    }
+
+    if ($expression -match '^(?i)CASE\b') {
+        return @(Format-CaseExpression -Text $expression -FirstPrefix $FirstPrefix -ContinuationPrefix $ContinuationPrefix)
+    }
+
+    $inLines = @(Format-InListExpression -Text $expression -FirstPrefix $FirstPrefix)
+    if ($inLines.Count -gt 0) {
+        return $inLines
+    }
+
+    return @(Wrap-ExpressionByWords -Text $expression -FirstPrefix $FirstPrefix -ContinuationPrefix $ContinuationPrefix)
+}
+
 # ---------------------------------------------------------------------------
 # SELECT / FROM / WHERE
 # ---------------------------------------------------------------------------
@@ -443,37 +602,7 @@ function Format-CaseSelectItem {
         [string]$NextPrefix
     )
 
-    $item = Normalize-Space $Item
-    if ($item -notmatch '^(?i)CASE\b') {
-        return @($FirstPrefix + $item)
-    }
-
-    $alias = ''
-    $mAlias = [regex]::Match($item, '(?i)\bEND\s+(AS\s+)?([A-Z0-9_]+)\s*$')
-    if ($mAlias.Success) {
-        $alias = ' ' + $(if ($mAlias.Groups[1].Success) { 'AS ' } else { '' }) + $mAlias.Groups[2].Value
-        $body = $item.Substring(0, $mAlias.Index + 3).Trim()
-    }
-    else {
-        $body = $item
-    }
-
-    $body = $body -replace '^(?i)CASE\s*', ''
-    $body = $body -replace '(?i)\s*END\s*$', ''
-    $tokens = [regex]::Matches($body, '(?i)\bWHEN\b|\bELSE\b')
-    if ($tokens.Count -eq 0) {
-        return @($FirstPrefix + $item)
-    }
-
-    $out = New-Object System.Collections.Generic.List[string]
-    $out.Add($FirstPrefix + 'CASE')
-    for ($i = 0; $i -lt $tokens.Count; $i++) {
-        $next = if ($i -lt $tokens.Count - 1) { $tokens[$i + 1].Index } else { $body.Length }
-        $segment = Normalize-Space $body.Substring($tokens[$i].Index, $next - $tokens[$i].Index)
-        $out.Add($NextPrefix + (' ' * $script:IndentSize) + $segment)
-    }
-    $out.Add($NextPrefix + 'END' + $alias)
-    return $out
+    return @(Format-CaseExpression -Text $Item -FirstPrefix $FirstPrefix -ContinuationPrefix $NextPrefix)
 }
 
 function Format-SelectList {
@@ -507,6 +636,13 @@ function Format-SelectList {
                 $line = $lines[$j]
                 if ($j -eq $lines.Count - 1) { $line += $suffix }
                 $out.Add($line)
+            }
+        }
+        elseif (($prefix + $item + $suffix).Length -gt $script:MaxLineLength) {
+            $lines = @(Format-ExpressionWithPrefix -Text $item -FirstPrefix $prefix -ContinuationPrefix $nextPrefix -Depth $Depth)
+            for ($j = 0; $j -lt $lines.Count; $j++) {
+                if ($j -eq $lines.Count - 1) { $out.Add($lines[$j] + $suffix) }
+                else { $out.Add($lines[$j]) }
             }
         }
         else {
@@ -553,14 +689,9 @@ function Format-JoinClause {
             'OR'  { $prefix + '    OR ' }
             default { $prefix + '   AND ' }
         }
-        $condition = Format-ParenthesizedSubqueries -Text $parts[$i].Text -AbsolutePrefixLength $linePrefix.Length
-        if ($condition.Contains([Environment]::NewLine)) {
-            $lines = $condition -split [regex]::Escape([Environment]::NewLine)
-            $out.Add($linePrefix + $lines[0])
-            for ($j = 1; $j -lt $lines.Count; $j++) { $out.Add($lines[$j]) }
-        }
-        else {
-            $out.Add($linePrefix + $condition)
+        $continuation = ' ' * $linePrefix.Length
+        foreach ($line in @(Format-ExpressionWithPrefix -Text $parts[$i].Text -FirstPrefix $linePrefix -ContinuationPrefix $continuation)) {
+            $out.Add($line)
         }
     }
     return $out
@@ -596,7 +727,15 @@ function Format-FromClause {
     $joinPattern = '\b(LEFT\s+OUTER\s+JOIN|RIGHT\s+OUTER\s+JOIN|FULL\s+OUTER\s+JOIN|INNER\s+JOIN|LEFT\s+JOIN|RIGHT\s+JOIN|FULL\s+JOIN|CROSS\s+JOIN|JOIN)\b'
     $joins = @(Get-TopLevelMatches -Text $text -Pattern $joinPattern)
     if ($joins.Count -eq 0) {
-        $out.Add($prefix + '  FROM ' + $text)
+        $linePrefix = $prefix + '  FROM '
+        if (($linePrefix + $text).Length -le $script:MaxLineLength) {
+            $out.Add($linePrefix + $text)
+        }
+        else {
+            foreach ($line in @(Wrap-ExpressionByWords -Text $text -FirstPrefix $linePrefix -ContinuationPrefix (' ' * $linePrefix.Length))) {
+                $out.Add($line)
+            }
+        }
         return $out
     }
 
@@ -626,14 +765,9 @@ function Format-WhereLikeClause {
     for ($i = 0; $i -lt $parts.Count; $i++) {
         $clause = if ($i -eq 0) { $Keyword } elseif ($parts[$i].Op -eq 'OR') { 'OR' } else { 'AND' }
         $linePrefix = Get-LinePrefixForClause -Clause $clause -Indent $Indent
-        $condition = Format-ParenthesizedSubqueries -Text $parts[$i].Text -AbsolutePrefixLength $linePrefix.Length -Depth $Depth
-        if ($condition.Contains([Environment]::NewLine)) {
-            $lines = $condition -split [regex]::Escape([Environment]::NewLine)
-            $out.Add($linePrefix + $lines[0])
-            for ($j = 1; $j -lt $lines.Count; $j++) { $out.Add($lines[$j]) }
-        }
-        else {
-            $out.Add($linePrefix + $condition)
+        $continuation = ' ' * $linePrefix.Length
+        foreach ($line in @(Format-ExpressionWithPrefix -Text $parts[$i].Text -FirstPrefix $linePrefix -ContinuationPrefix $continuation -Depth $Depth)) {
+            $out.Add($line)
         }
     }
     return $out
@@ -643,7 +777,8 @@ function Format-CommaClause {
     param(
         [string]$Text,
         [string]$Keyword,
-        [int]$Indent
+        [int]$Indent,
+        [int]$Depth = 0
     )
 
     $normalized = Normalize-Space $Text
@@ -657,7 +792,12 @@ function Format-CommaClause {
     $continuation = ' ' * $prefix.Length
     for ($i = 0; $i -lt $items.Count; $i++) {
         $suffix = if ($i -lt $items.Count - 1) { ',' } else { '' }
-        $out.Add($(if ($i -eq 0) { $prefix } else { $continuation }) + $items[$i] + $suffix)
+        $itemPrefix = if ($i -eq 0) { $prefix } else { $continuation }
+        $lines = @(Format-ExpressionWithPrefix -Text $items[$i] -FirstPrefix $itemPrefix -ContinuationPrefix $continuation -Depth $Depth)
+        for ($j = 0; $j -lt $lines.Count; $j++) {
+            if ($j -eq $lines.Count - 1) { $out.Add($lines[$j] + $suffix) }
+            else { $out.Add($lines[$j]) }
+        }
     }
     return $out
 }
@@ -698,7 +838,7 @@ function Format-SelectStatement {
             foreach ($line in @(Format-WhereLikeClause -Text $body -Keyword $name -Indent $Indent -Depth $Depth)) { $out.Add($line) }
         }
         elseif ($name -eq 'GROUP BY' -or $name -eq 'ORDER BY') {
-            foreach ($line in @(Format-CommaClause -Text $body -Keyword $name -Indent $Indent)) { $out.Add($line) }
+            foreach ($line in @(Format-CommaClause -Text $body -Keyword $name -Indent $Indent -Depth $Depth)) { $out.Add($line) }
         }
         elseif ($name -match '^WITH\s+(UR|RS|CS|RR|NC)$') {
             $out.Add((' ' * $Indent) + '  ' + $name)
@@ -815,7 +955,7 @@ function Format-WithStatement {
 }
 
 # ---------------------------------------------------------------------------
-# INSERT / UPDATE / DELETE / CREATE TABLE
+# INSERT / UPDATE / DELETE / CREATE TABLE / DECLARE GLOBAL TEMPORARY TABLE
 # ---------------------------------------------------------------------------
 
 function Format-ParenList {
@@ -1015,6 +1155,56 @@ function Format-CreateTableStatement {
     return $out
 }
 
+function Format-DeclareGlobalTemporaryTableStatement {
+    param(
+        [string]$Sql,
+        [int]$Indent = 0,
+        [switch]$NoSemicolon,
+        [int]$Depth = 0
+    )
+
+    $sql = Strip-TrailingSemicolon (Normalize-Space $Sql)
+    $prefix = ' ' * $Indent
+    $as = [regex]::Match($sql, '^(?i)(DECLARE\s+GLOBAL\s+TEMPORARY\s+TABLE\s+.+?\s+AS)\s*\(')
+
+    if (-not $as.Success) {
+        return @($prefix + $sql + $(if ($NoSemicolon) { '' } else { ';' }))
+    }
+
+    $open = $sql.IndexOf('(', $as.Index + $as.Length - 1)
+    $close = Find-MatchingParen -Text $sql -OpenIndex $open
+    if ($close -le $open) {
+        return @($prefix + $sql + $(if ($NoSemicolon) { '' } else { ';' }))
+    }
+
+    $head = Normalize-Space $as.Groups[1].Value
+    $inner = $sql.Substring($open + 1, $close - $open - 1).Trim()
+    $tail = Normalize-Space $sql.Substring($close + 1)
+    $out = New-Object System.Collections.Generic.List[string]
+
+    $out.Add($prefix + $head + ' (')
+    foreach ($line in @(Format-SqlStatement -Statement $inner -Indent ($Indent + $script:IndentSize) -NoSemicolon -Depth ($Depth + 1))) {
+        $out.Add($line)
+    }
+    $out.Add($prefix + ')')
+
+    if ($tail) {
+        if (($prefix + $tail).Length -le $script:MaxLineLength) {
+            $out.Add($prefix + $tail)
+        }
+        else {
+            foreach ($line in @(Wrap-ExpressionByWords -Text $tail -FirstPrefix $prefix -ContinuationPrefix ($prefix + (' ' * $script:IndentSize)))) {
+                $out.Add($line)
+            }
+        }
+    }
+
+    if (-not $NoSemicolon) {
+        $out[$out.Count - 1] = $out[$out.Count - 1].TrimEnd() + ';'
+    }
+    return $out
+}
+
 # ---------------------------------------------------------------------------
 # SQL PL fallback
 # ---------------------------------------------------------------------------
@@ -1088,6 +1278,9 @@ function Format-SqlStatement {
     }
     if ($sql -match '^(?i)CREATE\s+TABLE\b') {
         return @(Format-CreateTableStatement -Sql $sql -Indent $Indent -NoSemicolon:$NoSemicolon -Depth $Depth)
+    }
+    if ($sql -match '^(?i)DECLARE\s+GLOBAL\s+TEMPORARY\s+TABLE\b') {
+        return @(Format-DeclareGlobalTemporaryTableStatement -Sql $sql -Indent $Indent -NoSemicolon:$NoSemicolon -Depth $Depth)
     }
 
     return @((' ' * $Indent) + (Strip-TrailingSemicolon $sql) + $(if ($NoSemicolon) { '' } else { ';' }))
