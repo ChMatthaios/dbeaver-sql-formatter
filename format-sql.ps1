@@ -14,7 +14,7 @@ $MergeFormatter = Join-Path $PSScriptRoot "format-merge.ps1"
 $PolishFormatter = Join-Path $PSScriptRoot "format-polish.ps1"
 $CompactSubqueryFormatter = Join-Path $PSScriptRoot "format-compact-subqueries.ps1"
 $PostgresFormatter = Join-Path $PSScriptRoot "format-postgresql.ps1"
-$TsqlFormatter = Join-Path $PSScriptRoot "format-tsql.ps1"
+$TsqlFormatter = Join-Path $PSScriptRoot "format-tsql-safe.ps1"
 
 function Invoke-CoreFormatter {
     param([string]$Sql)
