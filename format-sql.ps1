@@ -165,6 +165,7 @@ function Test-PostgreSqlSpecificSyntax {
 function Test-PlsqlSpecificSyntax {
     param([string]$Sql)
 
+    if ($Sql -match '(?m)^\s*/\s*$') { return $true }
     if ($Sql -match "(?is)\bq'([\[\{\(<]|[^A-Za-z0-9\s'])") { return $true }
     $normalized = Get-DialectDetectionText -Sql $Sql
     if (-not $normalized) { return $false }
