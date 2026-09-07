@@ -5,7 +5,7 @@
     The core formatter still formats every nested SQL unit recursively first.
     This pass is only a placement decision: if the formatted unit can safely live
     inline at its final indentation, keep it inline; otherwise preserve multiline
-    formatting.
+    formatting. CTE AS (...) bodies remain structural multiline containers.
 #>
 
 $ErrorActionPreference = "Stop"
@@ -172,6 +172,12 @@ function Try-CompactOneSubquery {
 
         for ($matchIndex = $matches.Count - 1; $matchIndex -ge 0; $matchIndex--) {
             $openIndex = $matches[$matchIndex].Index
+            $prefix = $Lines[$start].Substring(0, $openIndex)
+
+            # CTE bodies are structural SQL containers, not inline expression
+            # subqueries. Preserve their established multiline layout.
+            if ($prefix -match '(?i)\bAS\s*$') { continue }
+
             $close = Find-SubqueryClose -Lines $Lines -StartLine $start -OpenIndex $openIndex
             if ($null -eq $close -or $close.Line -eq $start) { continue }
 
@@ -181,7 +187,6 @@ function Try-CompactOneSubquery {
             # Never collapse comments; newline placement can be semantically relevant.
             if ($blockText -match '--|/\*|\*/') { continue }
 
-            $prefix = $Lines[$start].Substring(0, $openIndex)
             $firstPart = $Lines[$start].Substring($openIndex)
             $middle = New-Object System.Collections.Generic.List[string]
             $middle.Add($firstPart)
