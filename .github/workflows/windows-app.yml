@@ -35,7 +35,6 @@ jobs:
       - name: Test structural UI formatting
         shell: pwsh
         run: |
-          # Reproduce the app sample at the 80-column setting used for this layout.
           @{
             maxLineLength = 80
             indentSize = 2
@@ -44,12 +43,19 @@ jobs:
           } | ConvertTo-Json | Set-Content .\settings\settings.json
 
           $inputSql = Get-Content .\windows-app\test-data\structured-complex-db2.sql -Raw
+          $base = $inputSql |
+            powershell -NoProfile -ExecutionPolicy Bypass -File .\format-sql.ps1 |
+            Out-String
+          $base = $base.TrimEnd("`r", "`n")
+
           $actual = $inputSql |
             powershell -NoProfile -ExecutionPolicy Bypass -File .\format-ui.ps1 |
             Out-String
           $actual = $actual.TrimEnd("`r", "`n")
           $expected = (Get-Content .\windows-app\test-data\structured-complex-db2.expected.sql -Raw).TrimEnd("`r", "`n")
           if ($actual -ne $expected) {
+            Write-Host '--- BASE ---'
+            Write-Host $base
             Write-Host '--- EXPECTED ---'
             Write-Host $expected
             Write-Host '--- ACTUAL ---'
