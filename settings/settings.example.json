@@ -1,0 +1,6 @@
+{
+  "maxLineLength": 120,
+  "indentSize": 2,
+  "keywordCasing": "Uppercase",
+  "preserveCommentLineBoundaries": true
+}
