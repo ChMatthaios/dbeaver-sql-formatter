@@ -75,6 +75,18 @@ jobs:
             throw 'Comment line boundary was not preserved.'
           }
 
+          $leadingCommentQuery = @"
+          -- =============================================================================
+          -- UPDATED RECONCILIATION - Extract the relevant adjustment procedure definitions
+          -- =============================================================================
+          SELECT TRIM (ROUTINE_SCHEMA) AS ROUTINE_SCHEMA, TRIM (ROUTINE_NAME) AS ROUTINE_NAME, ROUTINE_DEFINITION FROM QSYS2.SYSROUTINES WHERE ROUTINE_SCHEMA = 'DW_CORPS' AND ROUTINE_NAME IN ('PR_JAFMS05', 'PR_JAFMS25', 'PR_FADJS01', 'PR_FADJS02', 'PR_FADJS03', 'PRCSPRMS10', 'PRCSPRMS30', 'PRCSPRMS35', 'PRCSPRMS40', 'PRCSPRMS45', 'PRCSPRMS50') ORDER BY CASE ROUTINE_NAME WHEN 'PR_JAFMS05' THEN 1 WHEN 'PR_JAFMS25' THEN 2 WHEN 'PR_FADJS01' THEN 3 WHEN 'PR_FADJS02' THEN 4 WHEN 'PR_FADJS03' THEN 5 ELSE 99 END WITH UR;
+          "@
+          $leadingCommentFormatted = Assert-MaxWidth 'leading comments plus long SELECT' $leadingCommentQuery
+          if ($leadingCommentFormatted -notmatch "(?m)^SELECT TRIM \(ROUTINE_SCHEMA\)" -or $leadingCommentFormatted -match "(?m)^SELECT .*FROM QSYS2\.SYSROUTINES") {
+            Write-Host $leadingCommentFormatted
+            throw 'Leading comments caused the SELECT to fall back to one-line formatting.'
+          }
+
           $routineQuery = "SELECT TRIM (ROUTINE_SCHEMA) AS ROUTINE_SCHEMA, TRIM (ROUTINE_NAME) AS ROUTINE_NAME, ROUTINE_DEFINITION FROM QSYS2.SYSROUTINES WHERE ROUTINE_SCHEMA = 'DW_CORPS' AND ROUTINE_NAME IN ('PR_JAFMS05', 'PR_JAFMS25', 'PR_FADJS01', 'PR_FADJS02', 'PR_FADJS03', 'PRCSPRMS10', 'PRCSPRMS30', 'PRCSPRMS35', 'PRCSPRMS40', 'PRCSPRMS45', 'PRCSPRMS50') ORDER BY CASE ROUTINE_NAME WHEN 'PR_JAFMS05' THEN 1 WHEN 'PR_JAFMS25' THEN 2 WHEN 'PR_FADJS01' THEN 3 WHEN 'PR_FADJS02' THEN 4 WHEN 'PR_FADJS03' THEN 5 WHEN 'PRCSPRMS10' THEN 6 ELSE 99 END WITH UR;"
           $routineFormatted = Assert-MaxWidth 'long ROUTINE_NAME IN / ORDER BY CASE query' $routineQuery
           if ($routineFormatted -notmatch "(?m)^\s+AND ROUTINE_NAME IN \(") {
@@ -91,6 +103,29 @@ jobs:
           if ($dgttFormatted -notmatch "(?m)^DECLARE GLOBAL TEMPORARY TABLE SESSION\.REC_TABLE_INFO AS \(\r?$" -or $dgttFormatted -notmatch "(?m)^  SELECT ") {
             Write-Host $dgttFormatted
             throw 'DGTT recursive formatting smoke test failed.'
+          }
+
+          $mergeQuery = "MERGE INTO CUSTOMER_TARGET T USING (SELECT CUSTOMER_ID, EMAIL_ADDRESS FROM CUSTOMER_SOURCE WHERE BATCH_ID = 1) S ON (T.CUSTOMER_ID = S.CUSTOMER_ID) WHEN MATCHED THEN UPDATE SET T.EMAIL_ADDRESS = S.EMAIL_ADDRESS WHEN NOT MATCHED THEN INSERT (CUSTOMER_ID, EMAIL_ADDRESS) VALUES (S.CUSTOMER_ID, S.EMAIL_ADDRESS) WITH NC;"
+          $mergeFormatted = Assert-MaxWidth 'standalone MERGE with USING query' $mergeQuery
+          if ($mergeFormatted -match "(?m)^\s+WHERE BATCH_ID = 1;\r?$" -or $mergeFormatted -notmatch "(?m)^\s+WHERE BATCH_ID = 1\r?$") {
+            Write-Host $mergeFormatted
+            throw 'Embedded USING query received its own semicolon.'
+          }
+
+          $procedureWithMerge = @"
+          CREATE OR REPLACE PROCEDURE SP_TEST_MERGE
+          LANGUAGE SQL
+          BEGIN
+            MERGE INTO TGT T
+            USING SRC S ON T.ID = S.ID
+            WHEN MATCHED THEN
+              UPDATE SET T.VAL = S.VAL;
+          END;
+          "@
+          $procedureFormatted = Format-Sql $procedureWithMerge
+          if ($procedureFormatted -match "(?m)^\s*MERGE INTO TGT T;\r?$") {
+            Write-Host $procedureFormatted
+            throw 'Routine MERGE was incorrectly treated as a standalone MERGE line.'
           }
 
       - name: Enforce max line width on regression inputs
