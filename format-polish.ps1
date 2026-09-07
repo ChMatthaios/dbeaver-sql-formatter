@@ -313,6 +313,27 @@ function Format-ParenthesizedLogicalGroup {
 
     if ($balance -ne 0) { return $null }
 
+    # Do not expand a compact group that already fits on one line.
+    if ($end -eq $Start -and $first.Length -le $script:MaxLineLength) { return $null }
+
+    # If an earlier formatter already split the group cleanly at AND/OR
+    # boundaries, preserve that valid formatting rather than restyling it.
+    if ($end -gt $Start) {
+        $alreadyStructured = $true
+        $operatorLines = 0
+        for ($k = $Start + 1; $k -le $end; $k++) {
+            $continuation = $Lines[$k].TrimStart()
+            if (-not $continuation) { continue }
+            if ($continuation -match '^(?i)(AND|OR)\b') {
+                $operatorLines++
+                continue
+            }
+            $alreadyStructured = $false
+            break
+        }
+        if ($alreadyStructured -and $operatorLines -gt 0) { return $null }
+    }
+
     $joined = Normalize-Inline ($pieces -join ' ')
     $group = [regex]::Match($joined, '^(?i)(WHERE|AND|OR)\s+\((.*)\)$')
     if (-not $group.Success) { return $null }
