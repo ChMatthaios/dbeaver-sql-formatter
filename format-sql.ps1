@@ -1,10 +1,10 @@
 <#
     DBeaver SQL Formatter entry point.
 
-    Shared SQL is handled by the core formatter. PostgreSQL-, T-SQL- and Oracle
-    PL/SQL-specific syntax is detected automatically and routed through the
-    appropriate dialect formatter, so one DBeaver external formatter command
-    works across DB2, PostgreSQL, SQL Server/Azure SQL and Oracle.
+    Shared SQL is handled by the core formatter. PostgreSQL-, T-SQL-, Oracle
+    PL/SQL- and SPARQL-specific syntax is detected automatically and routed
+    through the appropriate dialect formatter, so one DBeaver external formatter
+    command works across DB2, PostgreSQL, SQL Server/Azure SQL, Oracle and SPARQL.
 #>
 
 $ErrorActionPreference = "Stop"
@@ -16,6 +16,7 @@ $CompactSubqueryFormatter = Join-Path $PSScriptRoot "format-compact-subqueries.p
 $PostgresFormatter = Join-Path $PSScriptRoot "format-postgresql.ps1"
 $TsqlFormatter = Join-Path $PSScriptRoot "format-tsql-safe.ps1"
 $PlsqlFormatter = Join-Path $PSScriptRoot "format-plsql.ps1"
+$SparqlFormatter = Join-Path $PSScriptRoot "format-sparql.ps1"
 
 function Invoke-CoreFormatter {
     param([string]$Sql)
@@ -52,6 +53,16 @@ function Invoke-PlsqlFormatter {
 
     $formatted = $Sql |
         powershell -NoProfile -ExecutionPolicy Bypass -File $PlsqlFormatter |
+        Out-String
+
+    return $formatted.TrimEnd("`r", "`n")
+}
+
+function Invoke-SparqlFormatter {
+    param([string]$Sql)
+
+    $formatted = $Sql |
+        powershell -NoProfile -ExecutionPolicy Bypass -File $SparqlFormatter |
         Out-String
 
     return $formatted.TrimEnd("`r", "`n")
@@ -95,6 +106,39 @@ function Get-DialectDetectionText {
     $masked = [regex]::Replace($masked, "'(?:''|[^'])*'", ' ')
     $masked = [regex]::Replace($masked, '"(?:""|[^"])*"', ' ')
     return ($masked -replace '[\r\n\t]+', ' ' -replace '\s+', ' ').Trim()
+}
+
+function Test-SparqlSpecificSyntax {
+    param([string]$Sql)
+
+    $normalized = Get-DialectDetectionText -Sql $Sql
+    if (-not $normalized) { return $false }
+
+    # PREFIX/BASE declarations are unambiguous SPARQL prologue signals.
+    if ($normalized -match '(?i)(?:^|\s)(?:PREFIX\s+(?:[A-Za-z][A-Za-z0-9_-]*:|:)\s*<[^>]+>|BASE\s+<[^>]+>)') {
+        return $true
+    }
+
+    # SPARQL Update forms have graph-template braces rather than SQL table syntax.
+    if ($normalized -match '(?i)\b(?:INSERT|DELETE)\s+DATA\s*\{' -or
+        $normalized -match '(?i)\bDELETE\s+WHERE\s*\{' -or
+        $normalized -match '(?i)^\s*(?:LOAD|CLEAR|DROP|CREATE|ADD|MOVE|COPY)\b[\s\S]*<[^>]+>') {
+        return $true
+    }
+
+    $hasGraphBlock = $normalized -match '\{'
+    $hasVariable = $normalized -match '(?<![A-Za-z0-9_])[\?\$][A-Za-z_][A-Za-z0-9_]*'
+
+    # ASK/CONSTRUCT/DESCRIBE are strong query-form signals when followed by a
+    # graph pattern. SELECT is shared with SQL, so require a SPARQL variable too.
+    if ($hasGraphBlock -and $normalized -match '(?i)^\s*(?:ASK|CONSTRUCT|DESCRIBE)\b') { return $true }
+    if ($hasGraphBlock -and $hasVariable -and $normalized -match '(?i)^\s*SELECT\b') { return $true }
+
+    if ($hasGraphBlock -and $hasVariable -and $normalized -match '(?i)\b(?:OPTIONAL|FILTER|BIND|VALUES|GRAPH|SERVICE|MINUS|UNION)\b') {
+        return $true
+    }
+
+    return $false
 }
 
 function Test-TsqlSpecificSyntax {
@@ -262,11 +306,15 @@ if ([string]::IsNullOrWhiteSpace($bodySql)) {
 
 $normalizedBody = ($bodySql -replace '[\r\n\t]+', ' ' -replace '\s+', ' ').Trim()
 $isRoutine = $normalizedBody -match '^(?i)(CREATE|ALTER)\s+(?:(?:OR\s+(?:REPLACE|ALTER))\s+)?(?:EDITIONABLE\s+|NONEDITIONABLE\s+)?(PROCEDURE|PROC|FUNCTION|TRIGGER|PACKAGE(?:\s+BODY)?|TYPE\s+BODY)\b'
-$isTsql = Test-TsqlSpecificSyntax -Sql $bodySql
-$isPlsql = (-not $isTsql) -and (Test-PlsqlSpecificSyntax -Sql $bodySql)
-$isPostgres = (-not $isTsql -and -not $isPlsql) -and (Test-PostgreSqlSpecificSyntax -Sql $bodySql)
+$isSparql = Test-SparqlSpecificSyntax -Sql $bodySql
+$isTsql = (-not $isSparql) -and (Test-TsqlSpecificSyntax -Sql $bodySql)
+$isPlsql = (-not $isSparql -and -not $isTsql) -and (Test-PlsqlSpecificSyntax -Sql $bodySql)
+$isPostgres = (-not $isSparql -and -not $isTsql -and -not $isPlsql) -and (Test-PostgreSqlSpecificSyntax -Sql $bodySql)
 
-if ($isTsql) {
+if ($isSparql) {
+    $formattedBody = Invoke-SparqlFormatter -Sql $bodySql
+}
+elseif ($isTsql) {
     $formattedBody = Invoke-TsqlFormatter -Sql $bodySql
     if (-not $isRoutine) {
         $formattedBody = Invoke-PolishFormatter -Sql $formattedBody
