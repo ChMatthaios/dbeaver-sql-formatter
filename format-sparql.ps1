@@ -58,8 +58,6 @@ function Get-SparqlTokens {
 
         if ([char]::IsWhiteSpace($ch)) { $i++; continue }
 
-        # SPARQL comments run from # to end of line. IRIs are consumed before
-        # this branch, so fragment identifiers inside <...#...> remain intact.
         if ($ch -eq '#') {
             $start = $i
             while ($i -lt $Text.Length -and $Text[$i] -ne "`r" -and $Text[$i] -ne "`n") { $i++ }
@@ -67,8 +65,6 @@ function Get-SparqlTokens {
             continue
         }
 
-        # IRIREF. A relational < operator has no matching > before whitespace,
-        # whereas a valid SPARQL IRIREF cannot contain raw whitespace.
         if ($ch -eq '<' -and ($i + 1 -ge $Text.Length -or $Text[$i + 1] -ne '=')) {
             $j = $i + 1
             $found = $false
@@ -84,17 +80,13 @@ function Get-SparqlTokens {
             }
         }
 
-        # Short and long RDF string literals. Escapes are preserved byte-for-byte.
         if ($ch -eq "'" -or $ch -eq '"') {
             $quote = $ch
             $isTriple = ($i + 2 -lt $Text.Length -and $Text[$i + 1] -eq $quote -and $Text[$i + 2] -eq $quote)
             $start = $i
             if ($isTriple) { $i += 3 } else { $i++ }
             while ($i -lt $Text.Length) {
-                if ($Text[$i] -eq '\') {
-                    $i += 2
-                    continue
-                }
+                if ($Text[$i] -eq '\') { $i += 2; continue }
                 if ($isTriple) {
                     if ($i + 2 -lt $Text.Length -and $Text[$i] -eq $quote -and $Text[$i + 1] -eq $quote -and $Text[$i + 2] -eq $quote) {
                         $i += 3
@@ -110,8 +102,6 @@ function Get-SparqlTokens {
             continue
         }
 
-        # Variables. A lone ? can still be a property-path modifier and falls
-        # through to the ordinary token branch.
         if (($ch -eq '?' -or $ch -eq '$') -and $i + 1 -lt $Text.Length -and [string]$Text[$i + 1] -match '[A-Za-z_]') {
             $start = $i
             $i += 2
@@ -163,12 +153,13 @@ function Get-SparqlTokens {
             $word = $Text.Substring($start, $i - $start)
             $upper = $word.ToUpperInvariant()
             if ($script:SparqlKeywords.ContainsKey($upper)) { $word = $upper }
-            # The Turtle/SPARQL shorthand predicate `a` is intentionally kept
-            # lowercase; changing it is not a presentation-only transformation.
             $tokens.Add((New-SparqlToken -Type 'Word' -Text $word))
         }
     }
-    return @($tokens)
+
+    # Windows PowerShell 5.1 can throw "Argument types do not match" when a
+    # generic List[object] is wrapped directly in @(...). Materialize it first.
+    return $tokens.ToArray()
 }
 
 $script:SparqlLines = New-Object System.Collections.Generic.List[string]
@@ -234,8 +225,6 @@ function Format-SparqlTokens {
             continue
         }
 
-        # A closing graph-pattern brace is held briefly so `} UNION {` can stay
-        # on one structural line. Any other following term begins a new line.
         if ($script:SparqlCurrent.Trim() -eq '}' -and $upper -ne 'UNION' -and $text -ne '.' -and $text -ne '}') {
             Flush-SparqlLine
         }
@@ -287,7 +276,7 @@ function Format-SparqlTokens {
             continue
         }
 
-        if ($text -eq ')'-or $text -eq ']') {
+        if ($text -eq ')' -or $text -eq ']') {
             Add-SparqlTokenText -Text $text -AttachLeft
             continue
         }
@@ -310,8 +299,6 @@ function Format-SparqlTokens {
         }
 
         if (Test-SparqlClauseStart -Word $upper) {
-            # DELETE WHERE is one SPARQL Update construct and should remain on a
-            # single header line; ordinary query WHERE starts a fresh clause.
             if ($upper -eq 'WHERE' -and $script:SparqlCurrent.Trim() -eq 'DELETE') {
                 Add-SparqlTokenText -Text 'WHERE'
                 continue
@@ -327,7 +314,7 @@ function Format-SparqlTokens {
     }
 
     Flush-SparqlLine
-    return @($script:SparqlLines)
+    return $script:SparqlLines.ToArray()
 }
 
 $inputSparql = [Console]::In.ReadToEnd()
