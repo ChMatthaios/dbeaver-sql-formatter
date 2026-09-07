@@ -3,8 +3,9 @@
 *.pssc
 *.psrc
 
-# VSCode
+# VSCode / IDE
 .vscode/
+.idea/
 
 # OS files
 .DS_Store
@@ -20,14 +21,13 @@ desktop.ini
 # Logs
 *.log
 
-# Local scratch files
+# Local scratch / generated files
 temp_*.sql
 *.scratch.sql
-
-# test out files
-*-out.sql
-*.out.sql
+*.formatted.sql
+*-formatted.sql
 *-output.sql
 *.output.sql
-*-formatted.sql
-*.formatted.sql
+
+# Local formatter preferences
+settings/settings.json

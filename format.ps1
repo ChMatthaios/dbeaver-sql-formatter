@@ -1,21 +1,11 @@
 <#
     SQL Formatter Test Runner
-    ------------------------------------------------------------
+
     Usage:
       .\format.ps1 -runall
       .\format.ps1 -check
       .\format.ps1 -file 01
-      .\format.ps1 -file 04_complicated_multiline_statements.sql
       .\format.ps1 -list
-
-    This script calls format-sql.ps1, which is the actual SQL formatter.
-
-    Modes:
-      -runall  Formats all tests and writes outputs to tests_out.
-      -check   Formats all tests into a temporary folder and compares them
-               against the committed outputs in tests_out.
-      -file    Formats one matching test file and writes output to tests_out.
-      -list    Lists available test input files.
 #>
 
 param(
@@ -26,10 +16,37 @@ param(
     [string]$file
 )
 
+$ErrorActionPreference = "Stop"
 $RootDir = $PSScriptRoot
 $Formatter = Join-Path $RootDir "format-sql.ps1"
 $TestDir = Join-Path $RootDir "tests"
 $OutDir = Join-Path $RootDir "tests_out"
+
+function Show-PreferencesHelp {
+    Write-Host "Preferences:"
+    Write-Host "  Formatter preferences are read from:"
+    Write-Host ""
+    Write-Host "      settings/settings.json"
+    Write-Host ""
+    Write-Host "  If the file does not exist, default preferences are used."
+    Write-Host ""
+    Write-Host "  Example:"
+    Write-Host ""
+    Write-Host '      {'
+    Write-Host '        "maxLineLength": 120,'
+    Write-Host '        "indentSize": 2,'
+    Write-Host '        "keywordCasing": "Uppercase",'
+    Write-Host '        "preserveCommentLineBoundaries": true'
+    Write-Host '      }'
+    Write-Host ""
+    Write-Host "  To change preferences:"
+    Write-Host "    1. Create the settings folder if needed."
+    Write-Host "    2. Copy settings/settings.example.json to settings/settings.json."
+    Write-Host "    3. Edit settings/settings.json."
+    Write-Host "    4. Run the formatter again."
+    Write-Host ""
+    Write-Host "  settings/settings.json is local/user-specific and should not normally be committed."
+}
 
 function Show-Help {
     Write-Host ""
@@ -42,18 +59,14 @@ function Show-Help {
     Write-Host "  .\format.ps1 -file 01"
     Write-Host "  .\format.ps1 -file 04_complicated_multiline_statements.sql"
     Write-Host ""
-    Write-Host "Optional sqlfmt command:"
-    Write-Host "  sqlfmt --list"
-    Write-Host "  sqlfmt --check"
-    Write-Host "  sqlfmt --runall"
-    Write-Host "  sqlfmt --file 01"
-    Write-Host ""
     Write-Host "Modes:"
     Write-Host "  -list    Lists available SQL test input files."
     Write-Host "  -check   Formats tests into a temp folder and compares them with tests_out."
     Write-Host "  -runall  Regenerates outputs in tests_out."
     Write-Host "  -file    Formats one matching test file."
     Write-Host "  -help    Shows this help message."
+    Write-Host ""
+    Show-PreferencesHelp
     Write-Host ""
     Write-Host "Note:"
     Write-Host "  DBeaver should call format-sql.ps1 directly."
@@ -63,8 +76,8 @@ function Show-Help {
 
 function Get-TestFiles {
     Get-ChildItem $TestDir -Filter "*.sql" |
-    Where-Object { $_.Name -notlike "*.out.sql" } |
-    Sort-Object Name
+        Where-Object { $_.Name -notlike "*.out.sql" } |
+        Sort-Object Name
 }
 
 function Format-OneFile {
@@ -75,12 +88,11 @@ function Format-OneFile {
     )
 
     New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
-
     $OutputFile = Join-Path $OutputDirectory ($InputFile.BaseName + ".out.sql")
 
     Get-Content $InputFile.FullName -Raw |
-    powershell -NoProfile -ExecutionPolicy Bypass -File $Formatter |
-    Set-Content $OutputFile -Encoding UTF8
+        powershell -NoProfile -ExecutionPolicy Bypass -File $Formatter |
+        Set-Content $OutputFile -Encoding UTF8
 
     if (-not $Quiet) {
         Write-Host "Formatted:" $InputFile.Name "->" (Split-Path $OutputFile -Leaf)
@@ -91,7 +103,6 @@ function Format-OneFile {
 
 function Test-FormatterOutput {
     $TempOutDir = Join-Path ([System.IO.Path]::GetTempPath()) ("sqlfmt-check-" + [guid]::NewGuid().ToString("N"))
-
     New-Item -ItemType Directory -Force -Path $TempOutDir | Out-Null
 
     $failed = 0
@@ -127,51 +138,31 @@ function Test-FormatterOutput {
 
     Write-Host ""
     Write-Host "Check complete. Passed: $passed. Failed: $failed."
-
-    if ($failed -gt 0) {
-        exit 1
-    }
-
+    if ($failed -gt 0) { exit 1 }
     exit 0
 }
 
-if ($help) {
-    Show-Help
-    exit 0
-}
-
-if ($list) {
-    Get-TestFiles | Select-Object -ExpandProperty Name
-    exit 0
-}
+if ($help) { Show-Help; exit 0 }
+if ($list) { Get-TestFiles | Select-Object -ExpandProperty Name; exit 0 }
 
 if ($runall) {
-    Get-TestFiles | ForEach-Object {
-        Format-OneFile -InputFile $_
-    }
-
+    Get-TestFiles | ForEach-Object { Format-OneFile -InputFile $_ }
     Write-Host ""
     Write-Host "Done. Output folder:" $OutDir
     exit 0
 }
 
-if ($check) {
-    Test-FormatterOutput
-}
+if ($check) { Test-FormatterOutput }
 
 if ($file) {
-    $matches = Get-TestFiles |
-    Where-Object {
-        $_.Name -eq $file -or
-        $_.BaseName -eq $file -or
-        $_.Name -like "$file*"
-    }
+    $matches = @(Get-TestFiles | Where-Object {
+        $_.Name -eq $file -or $_.BaseName -eq $file -or $_.Name -like "$file*"
+    })
 
     if ($matches.Count -eq 0) {
         Write-Host "No matching test file found for:" $file
         exit 1
     }
-
     if ($matches.Count -gt 1) {
         Write-Host "Multiple files matched. Be more specific:"
         $matches | Select-Object -ExpandProperty Name
@@ -179,7 +170,6 @@ if ($file) {
     }
 
     Format-OneFile -InputFile $matches[0]
-
     Write-Host ""
     Write-Host "Done. Output folder:" $OutDir
     exit 0
