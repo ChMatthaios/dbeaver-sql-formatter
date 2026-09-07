@@ -1,9 +1,10 @@
 <#
     DBeaver SQL Formatter entry point.
 
-    Shared SQL is handled by the core formatter. PostgreSQL-specific syntax is
-    detected automatically and routed through format-postgresql.ps1, so the same
-    DBeaver external formatter command can be used for DB2 and PostgreSQL.
+    Shared SQL is handled by the core formatter. PostgreSQL- and T-SQL-specific
+    syntax is detected automatically and routed through the appropriate dialect
+    formatter, so one DBeaver external formatter command works across DB2,
+    PostgreSQL, SQL Server and Azure SQL.
 #>
 
 $ErrorActionPreference = "Stop"
@@ -13,6 +14,7 @@ $MergeFormatter = Join-Path $PSScriptRoot "format-merge.ps1"
 $PolishFormatter = Join-Path $PSScriptRoot "format-polish.ps1"
 $CompactSubqueryFormatter = Join-Path $PSScriptRoot "format-compact-subqueries.ps1"
 $PostgresFormatter = Join-Path $PSScriptRoot "format-postgresql.ps1"
+$TsqlFormatter = Join-Path $PSScriptRoot "format-tsql-safe.ps1"
 
 function Invoke-CoreFormatter {
     param([string]$Sql)
@@ -29,6 +31,16 @@ function Invoke-PostgresFormatter {
 
     $formatted = $Sql |
         powershell -NoProfile -ExecutionPolicy Bypass -File $PostgresFormatter |
+        Out-String
+
+    return $formatted.TrimEnd("`r", "`n")
+}
+
+function Invoke-TsqlFormatter {
+    param([string]$Sql)
+
+    $formatted = $Sql |
+        powershell -NoProfile -ExecutionPolicy Bypass -File $TsqlFormatter |
         Out-String
 
     return $formatted.TrimEnd("`r", "`n")
@@ -54,6 +66,54 @@ function Invoke-CompactSubqueryFormatter {
     return $formatted.TrimEnd("`r", "`n")
 }
 
+function Get-DialectDetectionText {
+    param([string]$Sql)
+
+    # Remove text whose contents must not influence dialect detection. For example,
+    # an email address inside a string must not make '@' look like a T-SQL variable.
+    $masked = $Sql
+    $masked = [regex]::Replace($masked, '/\*[\s\S]*?\*/', ' ')
+    $masked = [regex]::Replace($masked, '--[^\r\n]*', ' ')
+    $masked = [regex]::Replace($masked, '\$[A-Za-z_][A-Za-z0-9_]*\$[\s\S]*?\$[A-Za-z_][A-Za-z0-9_]*\$', ' ')
+    $masked = [regex]::Replace($masked, '\$\$[\s\S]*?\$\$', ' ')
+    $masked = [regex]::Replace($masked, "(?i)N'(?:''|[^'])*'", ' ')
+    $masked = [regex]::Replace($masked, "'(?:''|[^'])*'", ' ')
+    $masked = [regex]::Replace($masked, '"(?:""|[^"])*"', ' ')
+    return ($masked -replace '[\r\n\t]+', ' ' -replace '\s+', ' ').Trim()
+}
+
+function Test-TsqlSpecificSyntax {
+    param([string]$Sql)
+
+    $normalized = Get-DialectDetectionText -Sql $Sql
+    if (-not $normalized) { return $false }
+
+    $patterns = @(
+        '(?<![A-Za-z0-9_])\[(?:\]\]|[^\]])+\]',
+        '(?<![A-Za-z0-9_])##?[A-Za-z_][A-Za-z0-9_]*',
+        '(?<![A-Za-z0-9_])@@?[A-Za-z_][A-Za-z0-9_]*',
+        '\bTOP\s*(?:\(|\d)',
+        '\b(?:CROSS|OUTER)\s+APPLY\b',
+        '\bOUTPUT\b',
+        '\bWITH\s*\(\s*(?:NOLOCK|UPDLOCK|HOLDLOCK|ROWLOCK|READPAST|TABLOCKX?|XLOCK|NOWAIT)\b',
+        '\bCREATE\s+OR\s+ALTER\b',
+        '\bBEGIN\s+(?:TRY|CATCH)\b|\bEND\s+(?:TRY|CATCH)\b',
+        '\b(?:TRY_CONVERT|TRY_CAST|ISNULL|IIF|GETDATE|SYSDATETIME|NEWID)\s*\(',
+        '\b(?:NVARCHAR|NCHAR|UNIQUEIDENTIFIER|DATETIME2|DATETIMEOFFSET|VARBINARY)\b',
+        '\bIDENTITY\s*\(',
+        '\bOPTION\s*\(',
+        '\bFOR\s+(?:JSON|XML)\b',
+        '\bOFFSET\s+[^\s]+\s+ROWS\s+FETCH\s+(?:NEXT|FIRST)\b',
+        '(?m)^\s*GO(?:\s+\d+)?\s*$',
+        '\b(?:RAISERROR|THROW)\b'
+    )
+
+    foreach ($pattern in $patterns) {
+        if ($normalized -match ('(?i)' + $pattern)) { return $true }
+    }
+    return $false
+}
+
 function Test-PostgreSqlSpecificSyntax {
     param([string]$Sql)
 
@@ -61,7 +121,7 @@ function Test-PostgreSqlSpecificSyntax {
     if (-not $normalized) { return $false }
 
     # Strong PostgreSQL signals. Ordinary ANSI SELECT/INSERT/UPDATE/DELETE SQL
-    # stays on the common path and therefore works for both dialects.
+    # stays on the common path and therefore works for all supported dialects.
     $patterns = @(
         '\$\$|\$[A-Za-z_][A-Za-z0-9_]*\$',
         '::',
@@ -102,9 +162,7 @@ function Split-LeadingCommentBlock {
 
         if ($inBlockComment) {
             $leading.Add($line.TrimEnd())
-            if ($trimmed -match '\*/') {
-                $inBlockComment = $false
-            }
+            if ($trimmed -match '\*/') { $inBlockComment = $false }
             $index++
             continue
         }
@@ -117,9 +175,7 @@ function Split-LeadingCommentBlock {
 
         if ($trimmed.StartsWith('/*')) {
             $leading.Add($line.TrimEnd())
-            if ($trimmed -notmatch '\*/') {
-                $inBlockComment = $true
-            }
+            if ($trimmed -notmatch '\*/') { $inBlockComment = $true }
             $index++
             continue
         }
@@ -129,32 +185,22 @@ function Split-LeadingCommentBlock {
             $index++
             continue
         }
-
         break
     }
 
-    if ($index -eq 0) {
-        return [pscustomobject]@{ Leading = @(); Body = $Sql }
-    }
+    if ($index -eq 0) { return [pscustomobject]@{ Leading = @(); Body = $Sql } }
 
     $body = if ($index -lt $lines.Count) {
         ($lines[$index..($lines.Count - 1)] -join [Environment]::NewLine)
     }
-    else {
-        ''
-    }
+    else { '' }
 
-    while ($leading.Count -gt 0 -and $leading[$leading.Count - 1] -eq '') {
-        $leading.RemoveAt($leading.Count - 1)
-    }
-
+    while ($leading.Count -gt 0 -and $leading[$leading.Count - 1] -eq '') { $leading.RemoveAt($leading.Count - 1) }
     return [pscustomobject]@{ Leading = @($leading); Body = $body }
 }
 
 $inputSql = [Console]::In.ReadToEnd()
-if ([string]::IsNullOrWhiteSpace($inputSql)) {
-    exit 0
-}
+if ([string]::IsNullOrWhiteSpace($inputSql)) { exit 0 }
 
 $split = Split-LeadingCommentBlock -Sql $inputSql
 $leadingComments = @($split.Leading)
@@ -166,10 +212,18 @@ if ([string]::IsNullOrWhiteSpace($bodySql)) {
 }
 
 $normalizedBody = ($bodySql -replace '[\r\n\t]+', ' ' -replace '\s+', ' ').Trim()
-$isRoutine = $normalizedBody -match '^(?i)CREATE\s+(OR\s+REPLACE\s+)?(PROCEDURE|FUNCTION)\b'
-$isPostgres = Test-PostgreSqlSpecificSyntax -Sql $bodySql
+$isRoutine = $normalizedBody -match '^(?i)(CREATE|ALTER)\s+(?:(?:OR\s+(?:REPLACE|ALTER))\s+)?(PROCEDURE|PROC|FUNCTION|TRIGGER)\b'
+$isTsql = Test-TsqlSpecificSyntax -Sql $bodySql
+$isPostgres = (-not $isTsql) -and (Test-PostgreSqlSpecificSyntax -Sql $bodySql)
 
-if ($isPostgres) {
+if ($isTsql) {
+    $formattedBody = Invoke-TsqlFormatter -Sql $bodySql
+    if (-not $isRoutine) {
+        $formattedBody = Invoke-PolishFormatter -Sql $formattedBody
+        $formattedBody = Invoke-CompactSubqueryFormatter -Sql $formattedBody
+    }
+}
+elseif ($isPostgres) {
     $formattedBody = Invoke-PostgresFormatter -Sql $bodySql
     if (-not $isRoutine) {
         $formattedBody = Invoke-PolishFormatter -Sql $formattedBody
@@ -198,8 +252,6 @@ else {
                     Out-String
                 $formattedMerge = $formattedMerge.TrimEnd("`r", "`n")
 
-                # The inner USING query is a SQL unit embedded inside MERGE, so it
-                # must not carry its own statement terminator before the close paren.
                 $formattedMerge = [regex]::Replace(
                     $formattedMerge,
                     ';(?=\r?\n\s*\)\s+[^\s;]+\s*(?:\r?\n|$))',
@@ -207,13 +259,9 @@ else {
                 )
 
                 $mergeLines = @($formattedMerge -split "`r?`n")
-                foreach ($mergeLine in $mergeLines) {
-                    $out.Add((' ' * $leading) + $mergeLine)
-                }
+                foreach ($mergeLine in $mergeLines) { $out.Add((' ' * $leading) + $mergeLine) }
             }
-            else {
-                $out.Add($line)
-            }
+            else { $out.Add($line) }
         }
 
         $formattedBody = ($out -join [Environment]::NewLine).TrimEnd()
@@ -223,16 +271,10 @@ else {
 }
 
 $final = New-Object System.Collections.Generic.List[string]
-foreach ($commentLine in $leadingComments) {
-    $final.Add($commentLine)
-}
-if ($leadingComments.Count -gt 0 -and $formattedBody) {
-    $final.Add('')
-}
+foreach ($commentLine in $leadingComments) { $final.Add($commentLine) }
+if ($leadingComments.Count -gt 0 -and $formattedBody) { $final.Add('') }
 if ($formattedBody) {
-    foreach ($line in @($formattedBody -split "`r?`n")) {
-        $final.Add($line)
-    }
+    foreach ($line in @($formattedBody -split "`r?`n")) { $final.Add($line) }
 }
 
 [Console]::Out.Write(($final -join [Environment]::NewLine).TrimEnd())
