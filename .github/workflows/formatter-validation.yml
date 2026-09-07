@@ -26,6 +26,23 @@ jobs:
             return ($Sql | powershell -NoProfile -ExecutionPolicy Bypass -File .\format-sql.ps1 | Out-String).TrimEnd("`r", "`n")
           }
 
+          function Assert-MaxWidth([string]$Name, [string]$Sql, [int]$Max = 120) {
+            $formatted = Format-Sql $Sql
+            $lines = @($formatted -split "`r?`n")
+            $violations = @()
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+              if ($lines[$i].Length -gt $Max) {
+                $violations += "line $($i + 1) length $($lines[$i].Length): $($lines[$i])"
+              }
+            }
+            if ($violations.Count -gt 0) {
+              Write-Host "WIDTH FAILURE: $Name"
+              $violations | ForEach-Object { Write-Host $_ }
+              throw "$Name exceeded the $Max-column margin."
+            }
+            return $formatted
+          }
+
           $select = Format-Sql "SELECT C.CUSTOMER_ID, C.CUSTOMER_NAME, C.EMAIL_ADDRESS FROM CUSTOMER C WHERE C.IS_ACTIVE = 1 WITH UR;"
           $expectedSelect = @(
             'SELECT C.CUSTOMER_ID,'
@@ -57,6 +74,44 @@ jobs:
             Write-Host $comment
             throw 'Comment line boundary was not preserved.'
           }
+
+          $routineQuery = "SELECT TRIM (ROUTINE_SCHEMA) AS ROUTINE_SCHEMA, TRIM (ROUTINE_NAME) AS ROUTINE_NAME, ROUTINE_DEFINITION FROM QSYS2.SYSROUTINES WHERE ROUTINE_SCHEMA = 'DW_CORPS' AND ROUTINE_NAME IN ('PR_JAFMS05', 'PR_JAFMS25', 'PR_FADJS01', 'PR_FADJS02', 'PR_FADJS03', 'PRCSPRMS10', 'PRCSPRMS30', 'PRCSPRMS35', 'PRCSPRMS40', 'PRCSPRMS45', 'PRCSPRMS50') ORDER BY CASE ROUTINE_NAME WHEN 'PR_JAFMS05' THEN 1 WHEN 'PR_JAFMS25' THEN 2 WHEN 'PR_FADJS01' THEN 3 WHEN 'PR_FADJS02' THEN 4 WHEN 'PR_FADJS03' THEN 5 WHEN 'PRCSPRMS10' THEN 6 ELSE 99 END WITH UR;"
+          $routineFormatted = Assert-MaxWidth 'long ROUTINE_NAME IN / ORDER BY CASE query' $routineQuery
+          if ($routineFormatted -notmatch "(?m)^\s+AND ROUTINE_NAME IN \(") {
+            Write-Host $routineFormatted
+            throw 'Long IN-list formatting smoke test failed.'
+          }
+          if ($routineFormatted -notmatch "(?m)^ ORDER BY CASE ROUTINE_NAME\s*$" -or $routineFormatted -notmatch "(?m)^\s+WHEN 'PR_JAFMS05' THEN 1") {
+            Write-Host $routineFormatted
+            throw 'ORDER BY CASE formatting smoke test failed.'
+          }
+
+          $dgttQuery = "DECLARE GLOBAL TEMPORARY TABLE SESSION.REC_TABLE_INFO AS (SELECT TRIM (TABLE_SCHEMA) AS TABLE_SCHEMA, TRIM (TABLE_NAME) AS TABLE_NAME, TRIM (COLUMN_NAME) AS COLUMN_NAME, TRIM (DATA_TYPE) AS DATA_TYPE, LENGTH, NUMERIC_SCALE, ORDINAL_POSITION, CASE WHEN COLUMN_NAME IN ('INT_REV_MON', 'INT_REV_YTD', 'INT_REV_RY', 'COM_REV_MON', 'COM_REV_YTD', 'COM_REV_RY', 'GRS_REV_MON', 'GRS_REV_YTD', 'GRS_REV_RY') THEN 'Y' ELSE 'N' END AS RECON_COLUMN_FLG FROM QSYS2.SYSCOLUMNS WHERE TABLE_SCHEMA = 'DW_CORPT' AND TABLE_NAME IN ('PRC_CST_M_MSR', 'PRC_CST_PDL3_M_MSR', 'PRC_CST_PDL4_M_MSR')) WITH DATA ON COMMIT PRESERVE ROWS;"
+          $dgttFormatted = Assert-MaxWidth 'DECLARE GLOBAL TEMPORARY TABLE AS query' $dgttQuery
+          if ($dgttFormatted -notmatch "(?m)^DECLARE GLOBAL TEMPORARY TABLE SESSION\.REC_TABLE_INFO AS \($" -or $dgttFormatted -notmatch "(?m)^  SELECT ") {
+            Write-Host $dgttFormatted
+            throw 'DGTT recursive formatting smoke test failed.'
+          }
+
+      - name: Enforce max line width on regression inputs
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $failed = $false
+          Get-ChildItem .\tests -Filter '*.sql' | Sort-Object Name | ForEach-Object {
+            $formatted = Get-Content $_.FullName -Raw |
+              powershell -NoProfile -ExecutionPolicy Bypass -File .\format-sql.ps1 |
+              Out-String
+            $lines = @($formatted -split "`r?`n")
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+              if ($lines[$i].Length -gt 120) {
+                Write-Host "WIDTH FAIL $($_.Name):$($i + 1) length=$($lines[$i].Length)"
+                Write-Host $lines[$i]
+                $failed = $true
+              }
+            }
+          }
+          if ($failed) { throw 'At least one regression output exceeds 120 columns.' }
 
       - name: Check regression outputs
         shell: powershell
