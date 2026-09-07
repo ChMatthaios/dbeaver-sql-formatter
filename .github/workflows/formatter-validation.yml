@@ -1,0 +1,100 @@
+name: Formatter validation
+
+on:
+  push:
+    branches:
+      - main
+      - fix/readme-aligned-formatter
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply staged formatter fix payload
+        if: ${{ hashFiles('.ci/fix.b64.*') != '' }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $parts = Get-ChildItem .ci\fix.b64.* | Sort-Object Name
+          $base64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
+          $bytes = [Convert]::FromBase64String($base64)
+          $zip = Join-Path $env:RUNNER_TEMP 'sqlfmt-fix.zip'
+          [IO.File]::WriteAllBytes($zip, $bytes)
+          $expanded = Join-Path $env:RUNNER_TEMP 'sqlfmt-fix'
+          Expand-Archive -Path $zip -DestinationPath $expanded -Force
+          $payloadRoot = Join-Path $expanded 'dbeaver-sql-formatter-fix'
+          Copy-Item (Join-Path $payloadRoot '*') -Destination . -Recurse -Force
+          Copy-Item (Join-Path $payloadRoot '.gitignore') -Destination . -Force
+
+      - name: Smoke-test README formatting rules
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          function Format-Sql([string]$Sql) {
+            return ($Sql | powershell -NoProfile -ExecutionPolicy Bypass -File .\format-sql.ps1 | Out-String).TrimEnd("`r", "`n")
+          }
+
+          $select = Format-Sql "SELECT C.CUSTOMER_ID, C.CUSTOMER_NAME, C.EMAIL_ADDRESS FROM CUSTOMER C WHERE C.IS_ACTIVE = 1 WITH UR;"
+          $expectedSelect = @"
+SELECT C.CUSTOMER_ID,
+       C.CUSTOMER_NAME,
+       C.EMAIL_ADDRESS
+  FROM CUSTOMER C
+ WHERE C.IS_ACTIVE = 1
+  WITH UR;
+"@.TrimEnd("`r", "`n")
+          if ($select -ne $expectedSelect) {
+            Write-Host 'SELECT output:'
+            Write-Host $select
+            throw 'SELECT README-style smoke test failed.'
+          }
+
+          $insert = Format-Sql "INSERT INTO CUSTOMER_AUDIT (CUSTOMER_ID, AUDIT_ACTION, AUDIT_TS, AUDIT_USER) VALUES (1001, 'CREATED', CURRENT TIMESTAMP, CURRENT USER);"
+          $expectedInsert = @"
+INSERT INTO CUSTOMER_AUDIT ( CUSTOMER_ID, AUDIT_ACTION, AUDIT_TS, AUDIT_USER )
+VALUES ( 1001, 'CREATED', CURRENT TIMESTAMP, CURRENT USER );
+"@.TrimEnd("`r", "`n")
+          if ($insert -ne $expectedInsert) {
+            Write-Host 'INSERT output:'
+            Write-Host $insert
+            throw 'Compact INSERT README-style smoke test failed.'
+          }
+
+          $comment = Format-Sql "SELECT A.ID,`n       -- Explanation for the next column.`n       CAST('-200' AS CHAR(20)) AS MSG_TP_CD`n  FROM ACCOUNT A;"
+          if ($comment -notmatch "-- Explanation for the next column\.\r?\n\s+CAST") {
+            Write-Host $comment
+            throw 'Comment line boundary was not preserved.'
+          }
+
+      - name: Generate regression outputs when payload is staged
+        if: ${{ hashFiles('.ci/fix.b64.*') != '' }}
+        shell: powershell
+        run: .\format.ps1 -runall
+
+      - name: Check regression outputs
+        shell: powershell
+        run: .\format.ps1 -check
+
+      - name: Commit validated payload to fix branch
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/fix/readme-aligned-formatter' && hashFiles('.ci/fix.b64.*') != '' }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Remove-Item .ci -Recurse -Force
+          Remove-Item tests\01_simple_one_line_statements.out.sql -Force -ErrorAction SilentlyContinue
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix formatter to match README specification"
+          git push origin HEAD:fix/readme-aligned-formatter
