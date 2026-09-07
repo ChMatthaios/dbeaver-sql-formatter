@@ -6,6 +6,8 @@
     flatten unsupported standalone MERGE statements into a single line.
     A final structural polish pass fixes long CASE conditions and parenthesized
     logical groups before the formatted SQL is returned to DBeaver.
+    Nested SQL units are then compacted back into their parent expression only
+    when the complete parent line still fits inside maxLineLength.
 #>
 
 $ErrorActionPreference = "Stop"
@@ -13,6 +15,7 @@ $ErrorActionPreference = "Stop"
 $CoreFormatter = Join-Path $PSScriptRoot "format-sql-core.ps1"
 $MergeFormatter = Join-Path $PSScriptRoot "format-merge.ps1"
 $PolishFormatter = Join-Path $PSScriptRoot "format-polish.ps1"
+$CompactSubqueryFormatter = Join-Path $PSScriptRoot "format-compact-subqueries.ps1"
 
 function Invoke-CoreFormatter {
     param([string]$Sql)
@@ -30,6 +33,16 @@ function Invoke-PolishFormatter {
     if ([string]::IsNullOrWhiteSpace($Sql)) { return $Sql }
     $formatted = $Sql |
         powershell -NoProfile -ExecutionPolicy Bypass -File $PolishFormatter |
+        Out-String
+    return $formatted.TrimEnd("`r", "`n")
+}
+
+function Invoke-CompactSubqueryFormatter {
+    param([string]$Sql)
+
+    if ([string]::IsNullOrWhiteSpace($Sql)) { return $Sql }
+    $formatted = $Sql |
+        powershell -NoProfile -ExecutionPolicy Bypass -File $CompactSubqueryFormatter |
         Out-String
     return $formatted.TrimEnd("`r", "`n")
 }
@@ -159,6 +172,7 @@ else {
 
     $formattedBody = ($out -join [Environment]::NewLine).TrimEnd()
     $formattedBody = Invoke-PolishFormatter -Sql $formattedBody
+    $formattedBody = Invoke-CompactSubqueryFormatter -Sql $formattedBody
 }
 
 $final = New-Object System.Collections.Generic.List[string]
