@@ -1,11 +1,8 @@
 <#
     DB2 MERGE formatter.
 
-    Input: one normalized MERGE statement on stdin.
-    Output: formatted MERGE on stdout.
-
-    The USING query is formatted independently by format-sql-core.ps1 and
-    then placed into the MERGE statement with parent indentation applied.
+    A MERGE is treated as a container. Its USING query is formatted independently
+    by format-sql-core.ps1, then placed back into the MERGE with parent indentation.
 #>
 
 $ErrorActionPreference = "Stop"
@@ -29,7 +26,7 @@ function Load-SqlfmtSettings {
         }
     }
     catch {
-        # Invalid settings must not make formatting fail.
+        # Invalid local settings must never break formatting.
     }
 }
 
@@ -132,16 +129,20 @@ function Split-TopLevelByComma {
     $start = 0
 
     for ($i = 0; $i -lt $Text.Length; $i++) {
-        if ($Text[$i] -eq '(') { $depth++ }
-        elseif ($Text[$i] -eq ')' -and $depth -gt 0) { $depth-- }
+        if ($Text[$i] -eq '(') {
+            $depth++
+        }
+        elseif ($Text[$i] -eq ')' -and $depth -gt 0) {
+            $depth--
+        }
         elseif ($Text[$i] -eq ',' -and $depth -eq 0) {
-            $piece = Normalize-Space $Text.Substring($start, $i - $start)
+            $piece = Normalize-Space ($Text.Substring($start, $i - $start))
             if ($piece) { $items.Add($piece) }
             $start = $i + 1
         }
     }
 
-    $tail = Normalize-Space $Text.Substring($start)
+    $tail = Normalize-Space ($Text.Substring($start))
     if ($tail) { $items.Add($tail) }
     return $items
 }
@@ -186,7 +187,7 @@ function Split-TopLevelLogical {
                     continue
                 }
 
-                $piece = Normalize-Space $Text.Substring($start, $i - $start)
+                $piece = Normalize-Space ($Text.Substring($start, $i - $start))
                 if ($piece) {
                     $parts.Add([pscustomobject]@{ Op = $currentOp; Text = $piece })
                 }
@@ -199,7 +200,7 @@ function Split-TopLevelLogical {
         $i++
     }
 
-    $tail = Normalize-Space $Text.Substring($start)
+    $tail = Normalize-Space ($Text.Substring($start))
     if ($tail) {
         $parts.Add([pscustomobject]@{ Op = $currentOp; Text = $tail })
     }
@@ -210,7 +211,11 @@ function Split-TopLevelLogical {
 }
 
 function Wrap-Words {
-    param([string]$Text, [string]$FirstPrefix, [string]$ContinuationPrefix)
+    param(
+        [string]$Text,
+        [string]$FirstPrefix,
+        [string]$ContinuationPrefix
+    )
 
     $text = Normalize-Space $Text
     if (-not $text) { return @($FirstPrefix.TrimEnd()) }
@@ -333,10 +338,12 @@ function Format-ParenList {
     $nextPrefix = ' ' * $firstPrefix.Length
 
     for ($i = 0; $i -lt $items.Count; $i++) {
-        $suffix = if ($i -lt $items.Count - 1) { ',' } else { ' )' }
-        $prefix = if ($i -eq 0) { $firstPrefix } else { $nextPrefix }
-        $candidate = $prefix + $items[$i] + $suffix
+        if ($i -lt $items.Count - 1) { $suffix = ',' }
+        else { $suffix = ' )' }
+        if ($i -eq 0) { $prefix = $firstPrefix }
+        else { $prefix = $nextPrefix }
 
+        $candidate = $prefix + $items[$i] + $suffix
         if ($candidate.Length -le $script:MaxLineLength) {
             $out.Add($candidate)
         }
@@ -358,18 +365,20 @@ function Format-UpdateAction {
         return @(Wrap-Words -Text $action -FirstPrefix '' -ContinuationPrefix '  ')
     }
 
-    $head = Normalize-Space $action.Substring(0, $set.Index)
+    $head = Normalize-Space ($action.Substring(0, $set.Index))
     if (-not $head) { $head = 'UPDATE' }
-    $body = Normalize-Space $action.Substring($set.Index + $set.Length)
+    $body = Normalize-Space ($action.Substring($set.Index + $set.Length))
     $items = @(Split-TopLevelByComma $body)
     $out = New-Object System.Collections.Generic.List[string]
     $out.Add($head)
 
     for ($i = 0; $i -lt $items.Count; $i++) {
-        $prefix = if ($i -eq 0) { '   SET ' } else { '       ' }
-        $suffix = if ($i -lt $items.Count - 1) { ',' } else { '' }
-        $candidate = $prefix + $items[$i] + $suffix
+        if ($i -eq 0) { $prefix = '   SET ' }
+        else { $prefix = '       ' }
+        if ($i -lt $items.Count - 1) { $suffix = ',' }
+        else { $suffix = '' }
 
+        $candidate = $prefix + $items[$i] + $suffix
         if ($candidate.Length -le $script:MaxLineLength) {
             $out.Add($candidate)
         }
@@ -398,7 +407,7 @@ function Format-InsertAction {
     }
 
     $columns = $action.Substring($open + 1, $close - $open - 1)
-    $tail = Normalize-Space $action.Substring($close + 1)
+    $tail = Normalize-Space ($action.Substring($close + 1))
     $out = New-Object System.Collections.Generic.List[string]
 
     foreach ($line in @(Format-ParenList -Keyword 'INSERT' -Body $columns)) {
@@ -414,7 +423,7 @@ function Format-InsertAction {
             foreach ($line in @(Format-ParenList -Keyword 'VALUES' -Body $values)) {
                 $out.Add($line)
             }
-            $after = Normalize-Space $tail.Substring($vclose + 1)
+            $after = Normalize-Space ($tail.Substring($vclose + 1))
             if ($after) {
                 foreach ($line in @(Wrap-Words -Text $after -FirstPrefix '' -ContinuationPrefix '  ')) {
                     $out.Add($line)
@@ -467,25 +476,29 @@ if ($null -eq $using -or $null -eq $on -or $on.Index -le $using.Index -or $whens
         $fallback.Add($line)
     }
     if ($isolation) { $fallback.Add('  ' + $isolation) }
-    if ($fallback.Count -gt 0) { $fallback[$fallback.Count - 1] = $fallback[$fallback.Count - 1] + ';' }
+    if ($fallback.Count -gt 0) {
+        $fallback[$fallback.Count - 1] = $fallback[$fallback.Count - 1] + ';'
+    }
     [Console]::Out.Write((Restore-SqlText ($fallback -join [Environment]::NewLine)))
     exit 0
 }
 
 $out = New-Object System.Collections.Generic.List[string]
-$head = Normalize-Space $sql.Substring(0, $using.Index)
+$head = Normalize-Space ($sql.Substring(0, $using.Index))
 foreach ($line in @(Wrap-Words -Text $head -FirstPrefix '' -ContinuationPrefix '  ')) {
     $out.Add($line)
 }
 
-$usingBody = Normalize-Space $sql.Substring($using.Index + $using.Length, $on.Index - ($using.Index + $using.Length)))
+$usingStart = $using.Index + $using.Length
+$usingLength = $on.Index - $usingStart
+$usingBody = Normalize-Space ($sql.Substring($usingStart, $usingLength))
 $usingFormatted = $false
 
 if ($usingBody.StartsWith('(')) {
     $close = Find-MatchingParen -Text $usingBody -OpenIndex 0
     if ($close -gt 0) {
         $inner = $usingBody.Substring(1, $close - 1).Trim()
-        $alias = Normalize-Space $usingBody.Substring($close + 1)
+        $alias = Normalize-Space ($usingBody.Substring($close + 1))
         if ($inner -match '^(?i)(SELECT|WITH)\b') {
             $out.Add(' USING (')
             Add-IndentedCoreSql -Output $out -Sql $inner -Indent 2
@@ -504,7 +517,9 @@ if (-not $usingFormatted) {
 }
 
 $firstWhenIndex = $whens[0].Index
-$onBody = Normalize-Space $sql.Substring($on.Index + $on.Length, $firstWhenIndex - ($on.Index + $on.Length)))
+$onStart = $on.Index + $on.Length
+$onLength = $firstWhenIndex - $onStart
+$onBody = Normalize-Space ($sql.Substring($onStart, $onLength))
 foreach ($line in @(Format-LogicalCondition -Text $onBody -Clause 'ON')) {
     $out.Add($line)
 }
@@ -515,7 +530,9 @@ for ($w = 0; $w -lt $whens.Count; $w++) {
     else { $next = $sql.Length }
 
     $whenName = (Normalize-Space $when.Value).ToUpperInvariant()
-    $segment = Normalize-Space $sql.Substring($when.Index + $when.Length, $next - ($when.Index + $when.Length))
+    $segmentStart = $when.Index + $when.Length
+    $segmentLength = $next - $segmentStart
+    $segment = Normalize-Space ($sql.Substring($segmentStart, $segmentLength))
     $then = Get-FirstTopLevelMatch -Text $segment -Pattern '\bTHEN\b'
 
     if ($null -eq $then) {
@@ -525,8 +542,8 @@ for ($w = 0; $w -lt $whens.Count; $w++) {
         continue
     }
 
-    $condition = Normalize-Space $segment.Substring(0, $then.Index)
-    $action = Normalize-Space $segment.Substring($then.Index + $then.Length)
+    $condition = Normalize-Space ($segment.Substring(0, $then.Index))
+    $action = Normalize-Space ($segment.Substring($then.Index + $then.Length))
     $out.Add('  ' + $whenName)
 
     if ($condition) {
