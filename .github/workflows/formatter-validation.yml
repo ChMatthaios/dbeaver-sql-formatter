@@ -46,14 +46,14 @@ jobs:
           }
 
           $select = Format-Sql "SELECT C.CUSTOMER_ID, C.CUSTOMER_NAME, C.EMAIL_ADDRESS FROM CUSTOMER C WHERE C.IS_ACTIVE = 1 WITH UR;"
-          $expectedSelect = @"
-SELECT C.CUSTOMER_ID,
-       C.CUSTOMER_NAME,
-       C.EMAIL_ADDRESS
-  FROM CUSTOMER C
- WHERE C.IS_ACTIVE = 1
-  WITH UR;
-"@.TrimEnd("`r", "`n")
+          $expectedSelect = @(
+            'SELECT C.CUSTOMER_ID,'
+            '       C.CUSTOMER_NAME,'
+            '       C.EMAIL_ADDRESS'
+            '  FROM CUSTOMER C'
+            ' WHERE C.IS_ACTIVE = 1'
+            '  WITH UR;'
+          ) -join [Environment]::NewLine
           if ($select -ne $expectedSelect) {
             Write-Host 'SELECT output:'
             Write-Host $select
@@ -61,10 +61,10 @@ SELECT C.CUSTOMER_ID,
           }
 
           $insert = Format-Sql "INSERT INTO CUSTOMER_AUDIT (CUSTOMER_ID, AUDIT_ACTION, AUDIT_TS, AUDIT_USER) VALUES (1001, 'CREATED', CURRENT TIMESTAMP, CURRENT USER);"
-          $expectedInsert = @"
-INSERT INTO CUSTOMER_AUDIT ( CUSTOMER_ID, AUDIT_ACTION, AUDIT_TS, AUDIT_USER )
-VALUES ( 1001, 'CREATED', CURRENT TIMESTAMP, CURRENT USER );
-"@.TrimEnd("`r", "`n")
+          $expectedInsert = @(
+            'INSERT INTO CUSTOMER_AUDIT ( CUSTOMER_ID, AUDIT_ACTION, AUDIT_TS, AUDIT_USER )'
+            "VALUES ( 1001, 'CREATED', CURRENT TIMESTAMP, CURRENT USER );"
+          ) -join [Environment]::NewLine
           if ($insert -ne $expectedInsert) {
             Write-Host 'INSERT output:'
             Write-Host $insert
