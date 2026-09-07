@@ -262,8 +262,8 @@ if ([string]::IsNullOrWhiteSpace($bodySql)) {
 $normalizedBody = ($bodySql -replace '[\r\n\t]+', ' ' -replace '\s+', ' ').Trim()
 $isRoutine = $normalizedBody -match '^(?i)(CREATE|ALTER)\s+(?:(?:OR\s+(?:REPLACE|ALTER))\s+)?(?:EDITIONABLE\s+|NONEDITIONABLE\s+)?(PROCEDURE|PROC|FUNCTION|TRIGGER|PACKAGE(?:\s+BODY)?|TYPE\s+BODY)\b'
 $isTsql = Test-TsqlSpecificSyntax -Sql $bodySql
-$isPostgres = (-not $isTsql) -and (Test-PostgreSqlSpecificSyntax -Sql $bodySql)
-$isPlsql = (-not $isTsql -and -not $isPostgres) -and (Test-PlsqlSpecificSyntax -Sql $bodySql)
+$isPlsql = (-not $isTsql) -and (Test-PlsqlSpecificSyntax -Sql $bodySql)
+$isPostgres = (-not $isTsql -and -not $isPlsql) -and (Test-PostgreSqlSpecificSyntax -Sql $bodySql)
 
 if ($isTsql) {
     $formattedBody = Invoke-TsqlFormatter -Sql $bodySql
