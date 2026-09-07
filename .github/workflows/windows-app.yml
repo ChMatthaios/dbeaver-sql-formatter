@@ -1,0 +1,49 @@
+name: Windows app
+
+on:
+  pull_request:
+    paths:
+      - 'windows-app/**'
+      - 'format-*.ps1'
+      - 'settings/**'
+      - '.github/workflows/windows-app.yml'
+  push:
+    branches: [ main ]
+    paths:
+      - 'windows-app/**'
+      - 'format-*.ps1'
+      - 'settings/**'
+      - '.github/workflows/windows-app.yml'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore .\windows-app\SqlFormatterApp\SqlFormatterApp.csproj
+
+      - name: Build
+        run: dotnet build .\windows-app\SqlFormatterApp\SqlFormatterApp.csproj -c Release --no-restore
+
+      - name: Publish portable Windows app
+        run: dotnet publish .\windows-app\SqlFormatterApp\SqlFormatterApp.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o .\artifacts\SqlFormatterApp
+
+      - name: Verify bundled formatter
+        shell: pwsh
+        run: |
+          if (-not (Test-Path .\artifacts\SqlFormatterApp\SqlFormatterApp.exe)) { throw 'SqlFormatterApp.exe was not published.' }
+          if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-sql.ps1)) { throw 'format-sql.ps1 was not bundled.' }
+          if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-sparql.ps1)) { throw 'SPARQL formatter was not bundled.' }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SqlFormatterApp-win-x64
+          path: .\artifacts\SqlFormatterApp\
+          if-no-files-found: error
