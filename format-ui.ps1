@@ -1,0 +1,44 @@
+<#
+    Windows UI formatter entry point.
+
+    The desktop app first runs the same format-sql.ps1 engine used by DBeaver,
+    then applies the UI semantic presentation pass for complex expressions.
+#>
+
+$ErrorActionPreference = 'Stop'
+$Formatter = Join-Path $PSScriptRoot 'format-sql.ps1'
+$SemanticPolish = Join-Path $PSScriptRoot 'format-semantic-polish.ps1'
+
+$inputSql = [Console]::In.ReadToEnd()
+if ([string]::IsNullOrWhiteSpace($inputSql)) { exit 0 }
+
+$trailingIsolation = [regex]::Match(
+    $inputSql,
+    '(?is)\bWITH\s+(UR|RS|CS|RR|NC)\s*;\s*$'
+)
+
+$formatted = $inputSql |
+    powershell -NoProfile -ExecutionPolicy Bypass -File $Formatter |
+    Out-String
+$formatted = $formatted.TrimEnd("`r", "`n")
+
+if (-not [string]::IsNullOrWhiteSpace($formatted)) {
+    $formatted = $formatted |
+        powershell -NoProfile -ExecutionPolicy Bypass -File $SemanticPolish |
+        Out-String
+    $formatted = $formatted.TrimEnd("`r", "`n")
+}
+
+# Formatting must never silently change DB2 isolation semantics.
+if ($trailingIsolation.Success) {
+    $isolation = 'WITH ' + $trailingIsolation.Groups[1].Value.ToUpperInvariant()
+    if ($formatted -notmatch ('(?is)\b' + [regex]::Escape($isolation) + '\s*;\s*$')) {
+        $formatted = $formatted.TrimEnd()
+        if ($formatted.EndsWith(';')) {
+            $formatted = $formatted.Substring(0, $formatted.Length - 1).TrimEnd()
+        }
+        $formatted += [Environment]::NewLine + '  ' + $isolation + ';'
+    }
+}
+
+[Console]::Out.Write($formatted)

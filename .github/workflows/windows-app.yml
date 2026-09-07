@@ -32,6 +32,23 @@ jobs:
       - name: Build
         run: dotnet build .\windows-app\SqlFormatterApp\SqlFormatterApp.csproj -c Release --no-restore
 
+      - name: Test structural UI formatting
+        shell: pwsh
+        run: |
+          $inputSql = Get-Content .\windows-app\test-data\structured-complex-db2.sql -Raw
+          $actual = $inputSql |
+            powershell -NoProfile -ExecutionPolicy Bypass -File .\format-ui.ps1 |
+            Out-String
+          $actual = $actual.TrimEnd("`r", "`n")
+          $expected = (Get-Content .\windows-app\test-data\structured-complex-db2.expected.sql -Raw).TrimEnd("`r", "`n")
+          if ($actual -ne $expected) {
+            Write-Host '--- EXPECTED ---'
+            Write-Host $expected
+            Write-Host '--- ACTUAL ---'
+            Write-Host $actual
+            throw 'Windows UI structural formatting regression failed.'
+          }
+
       - name: Publish portable Windows app
         run: dotnet publish .\windows-app\SqlFormatterApp\SqlFormatterApp.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o .\artifacts\SqlFormatterApp
 
@@ -40,6 +57,8 @@ jobs:
         run: |
           if (-not (Test-Path .\artifacts\SqlFormatterApp\SqlFormatterApp.exe)) { throw 'SqlFormatterApp.exe was not published.' }
           if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-sql.ps1)) { throw 'format-sql.ps1 was not bundled.' }
+          if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-ui.ps1)) { throw 'format-ui.ps1 was not bundled.' }
+          if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-semantic-polish.ps1)) { throw 'semantic polish formatter was not bundled.' }
           if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-sparql.ps1)) { throw 'SPARQL formatter was not bundled.' }
 
       - uses: actions/upload-artifact@v4

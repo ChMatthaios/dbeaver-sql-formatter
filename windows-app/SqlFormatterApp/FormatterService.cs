@@ -7,7 +7,7 @@ namespace SqlFormatterApp;
 public sealed class FormatterService
 {
     public string FormatterRoot { get; } = Path.Combine(AppContext.BaseDirectory, "Formatter");
-    public string FormatterScriptPath => Path.Combine(FormatterRoot, "format-sql.ps1");
+    public string FormatterScriptPath => Path.Combine(FormatterRoot, "format-ui.ps1");
     public bool IsAvailable => File.Exists(FormatterScriptPath);
 
     public async Task<FormatterResult> FormatAsync(string input, CancellationToken cancellationToken = default)
