@@ -119,20 +119,26 @@ function Test-SparqlSpecificSyntax {
         return $true
     }
 
-    # SPARQL Update forms have graph-template braces rather than SQL table syntax.
-    if ($normalized -match '(?i)\b(?:INSERT|DELETE)\s+DATA\s*\{' -or
-        $normalized -match '(?i)\bDELETE\s+WHERE\s*\{' -or
-        $normalized -match '(?i)^\s*(?:LOAD|CLEAR|DROP|CREATE|ADD|MOVE|COPY)\b[\s\S]*<[^>]+>') {
+    # SPARQL Update detection is deliberately structural. In particular, CREATE
+    # only counts as SPARQL when it is CREATE [SILENT] GRAPH <iri>; this avoids
+    # misrouting SQL CREATE FUNCTION/PROCEDURE text containing < and > operators.
+    if ($Sql -match '(?im)^\s*(?:INSERT|DELETE)\s+DATA\s*\{' -or
+        $Sql -match '(?im)^\s*DELETE\s+WHERE\s*\{' -or
+        $Sql -match '(?im)^\s*LOAD\s+(?:SILENT\s+)?<[^>\s]+>' -or
+        $Sql -match '(?im)^\s*(?:CLEAR|DROP)\s+(?:SILENT\s+)?(?:DEFAULT\b|NAMED\b|ALL\b|GRAPH\s+<[^>\s]+>)' -or
+        $Sql -match '(?im)^\s*CREATE\s+(?:SILENT\s+)?GRAPH\s+<[^>\s]+>' -or
+        $Sql -match '(?im)^\s*(?:ADD|MOVE|COPY)\s+(?:SILENT\s+)?(?:DEFAULT|GRAPH\s+<[^>\s]+>)\s+TO\s+(?:DEFAULT|GRAPH\s+<[^>\s]+>)') {
         return $true
     }
 
-    $hasGraphBlock = $normalized -match '\{'
+    $hasGraphBlock = $Sql -match '\{'
     $hasVariable = $normalized -match '(?<![A-Za-z0-9_])[\?\$][A-Za-z_][A-Za-z0-9_]*'
+    $queryForm = [regex]::Match($Sql, '(?im)^\s*(SELECT|ASK|CONSTRUCT|DESCRIBE)\b')
 
-    # ASK/CONSTRUCT/DESCRIBE are strong query-form signals when followed by a
-    # graph pattern. SELECT is shared with SQL, so require a SPARQL variable too.
-    if ($hasGraphBlock -and $normalized -match '(?i)^\s*(?:ASK|CONSTRUCT|DESCRIBE)\b') { return $true }
-    if ($hasGraphBlock -and $hasVariable -and $normalized -match '(?i)^\s*SELECT\b') { return $true }
+    if ($hasGraphBlock -and $queryForm.Success) {
+        $form = $queryForm.Groups[1].Value.ToUpperInvariant()
+        if ($form -ne 'SELECT' -or $hasVariable) { return $true }
+    }
 
     if ($hasGraphBlock -and $hasVariable -and $normalized -match '(?i)\b(?:OPTIONAL|FILTER|BIND|VALUES|GRAPH|SERVICE|MINUS|UNION)\b') {
         return $true
