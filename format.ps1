@@ -128,6 +128,11 @@ function Test-FormatterOutput {
             }
             else {
                 Write-Host "FAIL" $InputFile.Name "- output differs from expected" -ForegroundColor Red
+                Write-Host "--- EXPECTED ---"
+                Write-Host $Expected
+                Write-Host "--- ACTUAL ---"
+                Write-Host $Actual
+                Write-Host "--- END DIFF ---"
                 $failed++
             }
         }
