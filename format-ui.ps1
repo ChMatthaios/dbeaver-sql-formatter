@@ -23,10 +23,21 @@ $formatted = $inputSql |
 $formatted = $formatted.TrimEnd("`r", "`n")
 
 if (-not [string]::IsNullOrWhiteSpace($formatted)) {
-    $formatted = $formatted |
+    # The semantic pass recognizes function-call shaped lines. A CTE's `AS (`
+    # has the same superficial shape, so protect that structural token while the
+    # pass works on the expressions inside the CTE and restore it afterwards.
+    $cteAsToken = '__SQLFMT_CTE_AS_OPEN__'
+    $polishInput = [regex]::Replace(
+        $formatted,
+        '(?im)^(\s*)AS\s+\(',
+        ('$1' + $cteAsToken)
+    )
+
+    $formatted = $polishInput |
         powershell -NoProfile -ExecutionPolicy Bypass -File $SemanticPolish |
         Out-String
     $formatted = $formatted.TrimEnd("`r", "`n")
+    $formatted = $formatted.Replace($cteAsToken, 'AS (')
 }
 
 # Formatting must never silently change DB2 isolation semantics.
