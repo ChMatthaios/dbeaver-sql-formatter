@@ -4,12 +4,15 @@
     The core heuristic formatter handles SELECT/CTE/subquery/DML/DDL formatting.
     MERGE is post-processed as a container because the legacy dispatcher used to
     flatten unsupported standalone MERGE statements into a single line.
+    A final structural polish pass fixes long CASE conditions and parenthesized
+    logical groups before the formatted SQL is returned to DBeaver.
 #>
 
 $ErrorActionPreference = "Stop"
 
 $CoreFormatter = Join-Path $PSScriptRoot "format-sql-core.ps1"
 $MergeFormatter = Join-Path $PSScriptRoot "format-merge.ps1"
+$PolishFormatter = Join-Path $PSScriptRoot "format-polish.ps1"
 
 function Invoke-CoreFormatter {
     param([string]$Sql)
@@ -18,6 +21,16 @@ function Invoke-CoreFormatter {
         powershell -NoProfile -ExecutionPolicy Bypass -File $CoreFormatter |
         Out-String
 
+    return $formatted.TrimEnd("`r", "`n")
+}
+
+function Invoke-PolishFormatter {
+    param([string]$Sql)
+
+    if ([string]::IsNullOrWhiteSpace($Sql)) { return $Sql }
+    $formatted = $Sql |
+        powershell -NoProfile -ExecutionPolicy Bypass -File $PolishFormatter |
+        Out-String
     return $formatted.TrimEnd("`r", "`n")
 }
 
@@ -145,6 +158,7 @@ else {
     }
 
     $formattedBody = ($out -join [Environment]::NewLine).TrimEnd()
+    $formattedBody = Invoke-PolishFormatter -Sql $formattedBody
 }
 
 $final = New-Object System.Collections.Generic.List[string]
