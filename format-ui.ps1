@@ -132,6 +132,62 @@ function Remove-UiCommonIndent {
     }) -join [Environment]::NewLine).Trim()
 }
 
+function Get-UiCteLayoutMode {
+    $settingsPath = Join-Path $PSScriptRoot 'settings\settings.json'
+    if (-not (Test-Path $settingsPath)) { return 'Preserve' }
+
+    try {
+        $settings = Get-Content -Path $settingsPath -Raw | ConvertFrom-Json
+        if ($null -eq $settings.advanced -or -not [bool]$settings.advanced.enabled) { return 'Preserve' }
+        $mode = [string]$settings.advanced.clauses.cteLayout
+        if ($mode -in @('CompactHeader', 'ExpandedHeader')) { return $mode }
+    }
+    catch {
+        # Formatting still works with the normal formatter when settings are invalid.
+    }
+
+    return 'Preserve'
+}
+
+function Normalize-UiCteHeaders {
+    param([string]$Sql, [string]$Mode)
+
+    if ($Mode -ne 'CompactHeader') { return $Sql }
+
+    $lines = @($Sql -split "`r?`n")
+    $out = New-Object System.Collections.Generic.List[string]
+    $i = 0
+
+    while ($i -lt $lines.Count) {
+        if ($i + 1 -lt $lines.Count) {
+            $first = [regex]::Match(
+                $lines[$i],
+                '^(?<indent>\s*)(?<with>WITH\s+)?(?<name>[A-Za-z_][A-Za-z0-9_$#]*)\s*$',
+                [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+            )
+            $second = [regex]::Match(
+                $lines[$i + 1],
+                '^\s*AS\s*\(',
+                [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+            )
+
+            if ($first.Success -and $second.Success) {
+                $prefix = $first.Groups['indent'].Value
+                if ($first.Groups['with'].Success) { $prefix += 'WITH ' }
+                $candidate = $prefix + $first.Groups['name'].Value + ' ' + $lines[$i + 1].TrimStart()
+                $out.Add($candidate)
+                $i += 2
+                continue
+            }
+        }
+
+        $out.Add($lines[$i])
+        $i++
+    }
+
+    return ($out -join [Environment]::NewLine)
+}
+
 function Invoke-UiPresentationPasses {
     param([string]$Sql)
 
@@ -170,6 +226,7 @@ function Invoke-UiPresentationPasses {
 function Refine-UiMergeUsingQueries {
     param([string]$Text)
 
+    $cteLayout = Get-UiCteLayoutMode
     $matches = @([regex]::Matches($Text, '(?im)^[ \t]*MERGE\b'))
     for ($m = $matches.Count - 1; $m -ge 0; $m--) {
         $statementStart = $matches[$m].Index
@@ -190,6 +247,7 @@ function Refine-UiMergeUsingQueries {
         if ($inner -notmatch '^(?is)(WITH|SELECT)\b') { continue }
 
         $refined = Invoke-UiPresentationPasses $inner
+        $refined = Normalize-UiCteHeaders -Sql $refined -Mode $cteLayout
         $refinedLines = @($refined -split "`r?`n")
         $placed = [Environment]::NewLine + (($refinedLines | ForEach-Object { '  ' + $_ }) -join [Environment]::NewLine) + [Environment]::NewLine + ' '
 
