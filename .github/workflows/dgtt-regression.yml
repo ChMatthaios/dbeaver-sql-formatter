@@ -83,7 +83,7 @@ jobs:
             Write-Host $ui
             throw 'DGTT child query was not placed on a new indented line.'
           }
-          if ($ui -match '(?i)AS\s*\(\s*WITH\s+P4H') {
+          if ($ui -match '(?im)^DECLARE GLOBAL TEMPORARY TABLE[^\r\n]*AS[ \t]*\([ \t]*WITH\s+P4H') {
             Write-Host $ui
             throw 'DGTT child WITH query collapsed back onto the parent AS ( line.'
           }
