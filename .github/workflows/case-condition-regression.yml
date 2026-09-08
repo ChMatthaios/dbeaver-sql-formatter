@@ -87,7 +87,7 @@ jobs:
             throw 'Compound CASE WHEN predicate was not split according to leading boolean style.'
           }
 
-          if ($ui -match '(?i)WHEN\s+EXISTS\s*\(SELECT\s+1\s+FROM\s+CUSTOMER_BLACKLIST') {
+          if ($ui -match '(?im)^\s*WHEN[ \t]+EXISTS[ \t]*\(SELECT[ \t]+1[ \t]+FROM[ \t]+CUSTOMER_BLACKLIST') {
             Write-Host $ui
             throw 'CASE EXISTS nested SELECT collapsed back onto one physical line.'
           }
