@@ -2,10 +2,10 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="SQL Formatter"
-        Width="1320"
-        Height="800"
-        MinWidth="920"
-        MinHeight="560"
+        Width="1560"
+        Height="820"
+        MinWidth="1180"
+        MinHeight="600"
         WindowStartupLocation="CenterScreen"
         Background="#0B1120"
         Foreground="#E5E7EB"
@@ -38,6 +38,29 @@
       <Setter Property="SelectionBrush" Value="#334155" />
       <Setter Property="SelectionTextBrush" Value="#F8FAFC" />
     </Style>
+
+    <Style TargetType="TextBox" x:Key="SettingTextBox">
+      <Setter Property="Height" Value="32" />
+      <Setter Property="Padding" Value="8,4" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="Background" Value="#0B1324" />
+      <Setter Property="Foreground" Value="#E2E8F0" />
+      <Setter Property="CaretBrush" Value="#F8FAFC" />
+      <Setter Property="BorderBrush" Value="#334155" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="SelectionBrush" Value="#334155" />
+    </Style>
+
+    <Style TargetType="RadioButton">
+      <Setter Property="Foreground" Value="#CBD5E1" />
+      <Setter Property="Margin" Value="0,0,14,0" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style TargetType="CheckBox">
+      <Setter Property="Foreground" Value="#CBD5E1" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
   </Window.Resources>
 
   <Grid>
@@ -64,18 +87,6 @@
         </StackPanel>
 
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-          <TextBlock Text="Max width" Foreground="#94A3B8" VerticalAlignment="Center" Margin="0,0,8,0" />
-          <TextBox x:Name="WidthBox"
-                   Width="54"
-                   Height="30"
-                   VerticalContentAlignment="Center"
-                   TextAlignment="Center"
-                   Margin="0,0,14,0"
-                   Background="#0F172A"
-                   Foreground="#E2E8F0"
-                   CaretBrush="#F8FAFC"
-                   BorderBrush="#334155"
-                   SelectionBrush="#334155" />
           <Border Background="#172033" BorderBrush="#334155" BorderThickness="1" CornerRadius="4" Padding="10,6">
             <TextBlock x:Name="DialectText" Text="Dialect: Auto" Foreground="#CBD5E1" FontWeight="SemiBold" />
           </Border>
@@ -86,7 +97,9 @@
     <Grid Grid.Row="1" Margin="12">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*" />
-        <ColumnDefinition Width="12" />
+        <ColumnDefinition Width="14" />
+        <ColumnDefinition Width="290" />
+        <ColumnDefinition Width="14" />
         <ColumnDefinition Width="*" />
       </Grid.ColumnDefinitions>
 
@@ -107,6 +120,123 @@
       </Border>
 
       <Border Grid.Column="2" Background="#0F172A" BorderBrush="#334155" BorderThickness="1" CornerRadius="6">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="38" />
+            <RowDefinition Height="*" />
+          </Grid.RowDefinitions>
+
+          <Border Grid.Row="0" Background="#111827" BorderBrush="#334155" BorderThickness="0,0,0,1" Padding="12,0">
+            <DockPanel>
+              <TextBlock Text="Formatter Settings" FontWeight="SemiBold" Foreground="#F1F5F9" VerticalAlignment="Center" />
+              <TextBlock Text="Custom" DockPanel.Dock="Right" Foreground="#64748B" VerticalAlignment="Center" />
+            </DockPanel>
+          </Border>
+
+          <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Margin="16">
+              <TextBlock Text="Layout"
+                         FontSize="12"
+                         FontWeight="SemiBold"
+                         Foreground="#60A5FA"
+                         Margin="0,0,0,12" />
+
+              <TextBlock Text="Max line width" Foreground="#E2E8F0" FontWeight="SemiBold" />
+              <TextBlock Text="Wrap formatted SQL at this column. 60–400."
+                         Foreground="#64748B"
+                         FontSize="11"
+                         TextWrapping="Wrap"
+                         Margin="0,3,0,7" />
+              <TextBox x:Name="WidthBox"
+                       Style="{StaticResource SettingTextBox}"
+                       TextAlignment="Center"
+                       Margin="0,0,0,18" />
+
+              <TextBlock Text="Indent size" Foreground="#E2E8F0" FontWeight="SemiBold" />
+              <TextBlock Text="Indent nested structures by 2 or 4 spaces."
+                         Foreground="#64748B"
+                         FontSize="11"
+                         TextWrapping="Wrap"
+                         Margin="0,3,0,8" />
+              <StackPanel Orientation="Horizontal" Margin="0,0,0,18">
+                <RadioButton x:Name="Indent2Radio" GroupName="IndentSize" Content="2 spaces" />
+                <RadioButton x:Name="Indent4Radio" GroupName="IndentSize" Content="4 spaces" />
+              </StackPanel>
+
+              <Border Height="1" Background="#1E293B" Margin="0,0,0,18" />
+
+              <TextBlock Text="Keyword casing"
+                         FontSize="12"
+                         FontWeight="SemiBold"
+                         Foreground="#60A5FA"
+                         Margin="0,0,0,12" />
+              <StackPanel Margin="0,0,0,18">
+                <RadioButton x:Name="UppercaseRadio"
+                             GroupName="KeywordCasing"
+                             Content="UPPERCASE"
+                             Margin="0,0,0,9" />
+                <RadioButton x:Name="LowercaseRadio"
+                             GroupName="KeywordCasing"
+                             Content="lowercase"
+                             Margin="0,0,0,9" />
+                <RadioButton x:Name="PreserveCaseRadio"
+                             GroupName="KeywordCasing"
+                             Content="Preserve input casing"
+                             Margin="0" />
+              </StackPanel>
+
+              <Border Height="1" Background="#1E293B" Margin="0,0,0,18" />
+
+              <TextBlock Text="Comments"
+                         FontSize="12"
+                         FontWeight="SemiBold"
+                         Foreground="#60A5FA"
+                         Margin="0,0,0,12" />
+              <CheckBox x:Name="PreserveCommentsCheckBox"
+                        Content="Preserve comment line boundaries"
+                        Margin="0,0,0,6" />
+              <TextBlock Text="Keeps line and block comments anchored to their original line boundaries where possible."
+                         Foreground="#64748B"
+                         FontSize="11"
+                         TextWrapping="Wrap"
+                         Margin="20,0,0,20" />
+
+              <Border Background="#0B1324"
+                      BorderBrush="#1E293B"
+                      BorderThickness="1"
+                      CornerRadius="5"
+                      Padding="10"
+                      Margin="0,0,0,14">
+                <TextBlock x:Name="SettingsSummaryText"
+                           Foreground="#94A3B8"
+                           FontSize="11"
+                           TextWrapping="Wrap" />
+              </Border>
+
+              <Button Content="Apply Settings"
+                      Click="ApplySettings_Click"
+                      Background="#1D4ED8"
+                      BorderBrush="#2563EB"
+                      Foreground="#FFFFFF"
+                      HorizontalContentAlignment="Center"
+                      Margin="0,0,0,8" />
+              <Button Content="Reset Defaults"
+                      Click="ResetSettings_Click"
+                      HorizontalContentAlignment="Center"
+                      Margin="0" />
+
+              <TextBlock Text="Settings are also saved automatically when you format."
+                         Foreground="#64748B"
+                         FontSize="10"
+                         TextAlignment="Center"
+                         TextWrapping="Wrap"
+                         Margin="0,12,0,0" />
+            </StackPanel>
+          </ScrollViewer>
+        </Grid>
+      </Border>
+
+      <Border Grid.Column="4" Background="#0F172A" BorderBrush="#334155" BorderThickness="1" CornerRadius="6">
         <Grid>
           <Grid.RowDefinitions>
             <RowDefinition Height="38" />
