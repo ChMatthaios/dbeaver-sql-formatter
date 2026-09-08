@@ -3,10 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              StartupUri="MainWindow.xaml">
   <Application.Resources>
-    <!--
-      Semantic brushes. ThemeService swaps these at runtime so every control
-      keeps readable contrast in both soft-light and soft-dark modes.
-    -->
+    <!-- Semantic brushes. ThemeService swaps these at runtime. -->
     <SolidColorBrush x:Key="WindowBackgroundBrush" Color="#20252D" />
     <SolidColorBrush x:Key="TopBarBrush" Color="#252B34" />
     <SolidColorBrush x:Key="SurfaceBrush" Color="#2A303A" />
@@ -26,10 +23,29 @@
     <SolidColorBrush x:Key="DisabledTextBrush" Color="#7F8996" />
 
     <!--
-      A fully-owned ComboBox template. The stock Windows template can ignore
-      WPF Foreground resources for the closed selection box, which caused white
-      text on a white native background in dark mode. This template keeps the
-      selected value, popup items and arrow under the app's theme brushes.
+      Generic SQL Formatter icon: a calm blue rounded tile, three formatted
+      code lines and a small sparkle. DrawingImage is vector-based, so the same
+      resource stays crisp in the title bar and on the Windows taskbar.
+    -->
+    <DrawingImage x:Key="AppIcon">
+      <DrawingImage.Drawing>
+        <DrawingGroup>
+          <GeometryDrawing Brush="#5578B6">
+            <GeometryDrawing.Geometry>
+              <RectangleGeometry Rect="1,1,30,30" RadiusX="6" RadiusY="6" />
+            </GeometryDrawing.Geometry>
+          </GeometryDrawing>
+          <GeometryDrawing Brush="#F5F7FA" Geometry="M 7,8 H 23 V 11 H 7 Z M 10,14 H 25 V 17 H 10 Z M 7,20 H 20 V 23 H 7 Z" />
+          <GeometryDrawing Brush="#A9CBFF" Geometry="M 5,8 H 7 V 11 H 5 Z M 7,14 H 10 V 17 H 7 Z M 5,20 H 7 V 23 H 5 Z" />
+          <GeometryDrawing Brush="#FFFFFF" Geometry="M 24,20 L 25,23 L 28,24 L 25,25 L 24,28 L 23,25 L 20,24 L 23,23 Z" />
+        </DrawingGroup>
+      </DrawingImage.Drawing>
+    </DrawingImage>
+
+    <!--
+      Fully-owned ComboBox template. The stock Windows template can ignore WPF
+      Foreground resources for the closed selection box, causing unreadable
+      values in dark mode.
     -->
     <ControlTemplate x:Key="ThemedComboBoxTemplate" TargetType="{x:Type ComboBox}">
       <Grid SnapsToDevicePixels="True">
