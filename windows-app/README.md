@@ -30,7 +30,7 @@ Toolbar actions:
 
 `Ctrl+Enter` formats the current input. `Ctrl+Shift+S` saves the formatted output.
 
-The selected UI theme is stored per Windows user under `%LOCALAPPDATA%\SqlFormatterApp` and is restored on the next launch. The light palette uses muted greys rather than a bright white canvas; the dark palette uses charcoal/slate surfaces rather than near-black backgrounds. Text, controls, selected ComboBox values and popup items use theme-aware foreground/background resources so labels remain readable in either mode.
+The selected UI theme is stored per Windows user under `%LOCALAPPDATA%\SqlFormatterApp` and is restored on the next launch. The light palette uses muted greys rather than a bright white canvas; the dark palette uses charcoal/slate surfaces rather than near-black backgrounds. Text, controls, selected ComboBox values and popup items use theme-aware foreground/background resources so labels remain readable in either mode. Windows system control colors are overridden inside the app as well, preventing native ComboBox templates from falling back to white-on-white or dark-on-dark text.
 
 The SQL Beautifier panel includes presets plus granular controls for width, indentation, keyword casing, parentheses, SELECT/GROUP BY/ORDER BY and other lists, comma placement, joins, boolean operators, CTEs, CASE expressions and spacing. Formatter settings remain separate from the visual theme.
 
