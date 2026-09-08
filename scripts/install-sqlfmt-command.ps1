@@ -19,10 +19,10 @@ $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
-$RunnerPath = Join-Path $ProjectRoot "format.ps1"
+$RunnerPath = Join-Path $ProjectRoot "formatter\format.ps1"
 
 if (-not (Test-Path $RunnerPath)) {
-    throw "Could not find format.ps1 at expected path: $RunnerPath"
+    throw "Could not find formatter/format.ps1 at expected path: $RunnerPath"
 }
 
 [Environment]::SetEnvironmentVariable(
@@ -52,7 +52,7 @@ function sqlfmt {
         throw "DBEAVER_SQL_FORMATTER_HOME is not set. Run scripts/install-sqlfmt-command.ps1 from the formatter repository."
     }
 
-    $runner = Join-Path $formatterHome "format.ps1"
+    $runner = Join-Path $formatterHome "formatter\format.ps1"
 
     if (-not (Test-Path $runner)) {
         throw "Formatter runner not found: $runner"
