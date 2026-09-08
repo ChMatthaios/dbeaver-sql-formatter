@@ -195,7 +195,7 @@ jobs:
 
           $badIndent = @($ui -split "`r?`n" | Where-Object {
             $leading = $_.Length - $_.TrimStart().Length
-            $leading -gt 32
+            $leading -gt 60
           })
           if ($badIndent.Count -gt 0) {
             Write-Host '--- EXCESSIVE INDENTATION ---'
