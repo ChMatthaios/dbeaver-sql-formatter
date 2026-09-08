@@ -23,7 +23,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
 
           function Format-Sql([string]$Sql) {
-            return ($Sql | powershell -NoProfile -ExecutionPolicy Bypass -File .\format-sql.ps1 | Out-String).TrimEnd("`r", "`n")
+            return ($Sql | powershell -NoProfile -ExecutionPolicy Bypass -File .\formatter\format-sql.ps1 | Out-String).TrimEnd("`r", "`n")
           }
 
           function Assert-MaxWidth([string]$Name, [string]$Sql, [int]$Max = 120) {
@@ -135,7 +135,7 @@ jobs:
           $failed = $false
           Get-ChildItem .\tests -Filter '*.sql' | Sort-Object Name | ForEach-Object {
             $formatted = Get-Content $_.FullName -Raw |
-              powershell -NoProfile -ExecutionPolicy Bypass -File .\format-sql.ps1 |
+              powershell -NoProfile -ExecutionPolicy Bypass -File .\formatter\format-sql.ps1 |
               Out-String
             $lines = @($formatted -split "`r?`n")
             for ($i = 0; $i -lt $lines.Count; $i++) {
@@ -150,4 +150,4 @@ jobs:
 
       - name: Check regression outputs
         shell: powershell
-        run: .\format.ps1 -check
+        run: .\formatter\format.ps1 -check
