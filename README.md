@@ -1,31 +1,35 @@
 # DBeaver SQL Formatter
 
-A PowerShell-based DB2 SQL formatter designed mainly for **DBeaver external formatter usage**.
+A PowerShell-based SQL formatter designed for **DBeaver external formatter usage** and the optional Windows formatter UI.
 
 Core rule:
 
 ```text
-format-sql.ps1 is the formatter entry point.
+The Windows UI and DBeaver use the same script-level formatting pipeline.
 Every SQL unit is formatted independently, then placed into its parent context.
 The configured maxLineLength (120 by default) is treated as the margin for each formatted unit.
 ```
 
 The formatter reads SQL from **stdin** and writes formatted SQL to **stdout**, which makes it usable from DBeaver, PowerShell, file runners, and the optional `sqlfmt` command.
 
+The current dialect router supports common/DB2 SQL, PostgreSQL, SQL Server/T-SQL, Oracle SQL/PLSQL, and SPARQL. Dialect-specific syntax is detected automatically.
+
 ---
 
 ## What this project does
 
-This project formats practical DB2 SQL with a consistent style. It is heuristic, not a full DB2 parser, so the formatter should prefer safe formatting over aggressive rewriting. If it cannot understand something safely, it should avoid destroying the query.
+This project formats practical SQL with a consistent style. It is heuristic rather than a full parser for every supported language, so the formatter should prefer safe formatting over aggressive rewriting. If it cannot understand something safely, it should avoid destroying the query.
 
 Main goals:
 
 - format selected SQL directly inside DBeaver,
+- make DBeaver output exactly match the Windows UI output,
+- share the same saved formatting profile between the UI and DBeaver,
 - format `.sql` files from PowerShell,
 - support tests and regression checks,
 - support optional user preferences,
 - keep comments and strings safe,
-- recursively format CTEs, subqueries, joins, DGTTs, MERGE `USING` queries, and other DB2 SQL containers where possible,
+- recursively format CTEs, subqueries, joins, DGTTs, MERGE `USING` queries, and other SQL containers where possible,
 - keep output inside the configured line margin by breaking at SQL structure before arbitrary words,
 - prefer logical boundaries (`AND`, `OR`, `THEN`, comma-separated items) over splitting function calls or nested expressions.
 
@@ -37,6 +41,10 @@ Main goals:
 dbeaver-sql-formatter/
 ├─ .gitignore
 ├─ README.md
+├─ format-dbeaver.ps1
+├─ format-ui-script.ps1
+├─ format-ui.ps1
+├─ format-beautifier.ps1
 ├─ format-sql.ps1
 ├─ format-sql-core.ps1
 ├─ format-merge.ps1
@@ -57,16 +65,20 @@ Important files:
 
 | File | Purpose |
 |---|---|
-| `format-sql.ps1` | DBeaver/CLI entry point. |
-| `format-sql-core.ps1` | Main heuristic SQL formatter. |
+| `format-dbeaver.ps1` | DBeaver entry point. Delegates to the exact same full pipeline used by the Windows UI. |
+| `format-ui-script.ps1` | Shared script-level formatter used by the Windows UI and DBeaver wrapper. Handles multi-statement input and UI presentation repairs. |
+| `format-ui.ps1` | Shared per-statement UI presentation pipeline. |
+| `format-beautifier.ps1` | Applies the advanced formatting profile selected in the Windows UI. |
+| `format-sql.ps1` | Dialect-aware SQL engine used underneath the presentation pipeline. |
+| `format-sql-core.ps1` | Main heuristic common/DB2 SQL formatter. |
 | `format-merge.ps1` | Structural formatter for standalone DB2 `MERGE` statements. |
-| `format-polish.ps1` | Final structural pass for long CASE conditions and logical groups. |
+| `format-polish.ps1` | Structural pass for long CASE conditions and logical groups. |
 | `format.ps1` | Test/development runner. |
 | `format-file.ps1` | Formats real `.sql` files. |
 | `scripts/install-sqlfmt-command.ps1` | Optional installer for the `sqlfmt` command. |
 | `tests/` | Input regression tests. |
 | `tests_out/` | Expected formatted outputs. |
-| `settings/settings.json` | Local user preferences. Usually ignored by Git. |
+| `settings/settings.json` | Local user preferences shared by the Windows UI and DBeaver. Usually ignored by Git. |
 | `settings/settings.example.json` | Example/default preferences. Safe to commit. |
 
 ---
@@ -84,7 +96,9 @@ format each unit independently
         ↓
 place it back into its parent with parent indentation
         ↓
-apply structural 120-column polish
+apply semantic presentation passes
+        ↓
+apply the saved advanced beautifier profile
 ```
 
 The formatter should break on SQL structure before breaking arbitrary text. For example, a long CASE condition should prefer:
@@ -102,21 +116,31 @@ over splitting a function call in the middle. Likewise, a long parenthesized OR 
        OR CONDITION_3)
 ```
 
-### DBeaver flow
+### Shared Windows UI / DBeaver flow
 
 ```text
-DBeaver selected SQL
+selected SQL / editor SQL
         ↓ stdin
-format-sql.ps1
-        ↓
-format-sql-core.ps1
-        ↓
-format-merge.ps1 (when needed)
-        ↓
-format-polish.ps1
-        ↓ stdout
-DBeaver replaces selected SQL
+format-dbeaver.ps1                Windows UI
+        ↓                            ↓
+        └──────→ format-ui-script.ps1
+                     ↓
+               format-ui.ps1
+                     ↓
+               format-sql.ps1
+                     ↓
+             dialect-specific engine
+                     ↓
+        semantic / CASE / DGTT presentation
+                     ↓
+             format-beautifier.ps1
+                     ↓
+          settings/settings.json
+                     ↓ stdout
+          identical formatted result
 ```
+
+This is intentional: DBeaver is not given a reduced formatter anymore. It receives the same script-level formatting and the same advanced preferences as the Windows application.
 
 ### File formatting flow
 
@@ -206,25 +230,35 @@ The exact wording may differ slightly depending on the DBeaver version.
 
 ### 2. Configure external formatter
 
-Use PowerShell and point directly to `format-sql.ps1`.
+Use PowerShell and point to `format-dbeaver.ps1`.
 
 Command shape:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "FULL_PATH_TO_REPOSITORY\format-sql.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "FULL_PATH_TO_REPOSITORY\format-dbeaver.ps1"
 ```
 
 Example:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Path\To\dbeaver-sql-formatter\format-sql.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Path\To\dbeaver-sql-formatter\format-dbeaver.ps1"
 ```
 
 Replace `C:\Path\To\dbeaver-sql-formatter` with your actual local path.
 
 Do not commit personal Windows paths to the repository.
 
-### 3. Format SQL in DBeaver
+### 3. Use the same formatting profile as the Windows UI
+
+The Windows application writes its selected formatting preferences to:
+
+```text
+settings\settings.json
+```
+
+`format-dbeaver.ps1` runs the same presentation pipeline and reads that same file. Change a formatting preference in the Windows UI, save/apply it, and the next DBeaver format operation uses the same profile.
+
+### 4. Format SQL in DBeaver
 
 Use:
 
@@ -232,24 +266,22 @@ Use:
 Ctrl + Shift + F
 ```
 
-DBeaver formats either the selected text or the query where the cursor currently is. For large CTEs, subqueries, procedures, or multi-statement scripts, select the full query before formatting.
+DBeaver formats either the selected text or the query where the cursor currently is. The shared script-level formatter supports multi-statement selections and automatically routes supported dialect-specific syntax.
 
 ---
 
 ## Direct formatter usage
 
-`format-sql.ps1` reads from stdin and writes to stdout.
+For the exact Windows UI/DBeaver presentation result, use `format-dbeaver.ps1`:
+
+```powershell
+Get-Content .\input.sql -Raw | powershell -NoProfile -ExecutionPolicy Bypass -File .\format-dbeaver.ps1
+```
+
+The lower-level dialect-aware engine remains available as `format-sql.ps1`:
 
 ```powershell
 Get-Content .\input.sql -Raw | powershell -NoProfile -ExecutionPolicy Bypass -File .\format-sql.ps1
-```
-
-Save output:
-
-```powershell
-Get-Content .\input.sql -Raw |
-  powershell -NoProfile -ExecutionPolicy Bypass -File .\format-sql.ps1 |
-  Set-Content .\output.sql
 ```
 
 For normal file usage, prefer `format-file.ps1`.

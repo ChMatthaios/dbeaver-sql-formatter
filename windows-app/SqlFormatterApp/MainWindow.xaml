@@ -2,269 +2,548 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="SQL Formatter"
-        Width="1560"
-        Height="820"
-        MinWidth="1180"
-        MinHeight="600"
+        Width="1120"
+        Height="700"
+        MinWidth="900"
+        MinHeight="560"
         WindowStartupLocation="CenterScreen"
-        Background="#0B1120"
-        Foreground="#E5E7EB"
+        Background="{DynamicResource WindowBackgroundBrush}"
+        Foreground="{DynamicResource TextPrimaryBrush}"
+        Icon="{StaticResource AppIcon}"
+        SourceInitialized="Window_SourceInitialized"
         PreviewKeyDown="Window_PreviewKeyDown">
   <Window.Resources>
     <Style TargetType="Button">
       <Setter Property="Margin" Value="0,0,8,0" />
-      <Setter Property="Padding" Value="14,7" />
-      <Setter Property="MinHeight" Value="34" />
-      <Setter Property="Background" Value="#1E293B" />
-      <Setter Property="Foreground" Value="#E5E7EB" />
-      <Setter Property="BorderBrush" Value="#334155" />
+      <Setter Property="Padding" Value="12,6" />
+      <Setter Property="MinHeight" Value="32" />
+      <Setter Property="Background" Value="{DynamicResource ControlBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="Cursor" Value="Hand" />
+      <Style.Triggers>
+        <Trigger Property="IsMouseOver" Value="True">
+          <Setter Property="Background" Value="{DynamicResource ControlHoverBrush}" />
+        </Trigger>
+        <Trigger Property="IsEnabled" Value="False">
+          <Setter Property="Foreground" Value="{DynamicResource DisabledTextBrush}" />
+          <Setter Property="Opacity" Value="0.8" />
+        </Trigger>
+      </Style.Triggers>
+    </Style>
+
+    <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+      <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource AccentTextBrush}" />
+      <Style.Triggers>
+        <Trigger Property="IsMouseOver" Value="True">
+          <Setter Property="Background" Value="{DynamicResource AccentHoverBrush}" />
+          <Setter Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
+        </Trigger>
+      </Style.Triggers>
     </Style>
 
     <Style TargetType="TextBox" x:Key="EditorTextBox">
       <Setter Property="FontFamily" Value="Consolas" />
-      <Setter Property="FontSize" Value="14" />
+      <Setter Property="FontSize" Value="13.5" />
       <Setter Property="AcceptsReturn" Value="True" />
       <Setter Property="AcceptsTab" Value="True" />
       <Setter Property="TextWrapping" Value="NoWrap" />
       <Setter Property="HorizontalScrollBarVisibility" Value="Auto" />
       <Setter Property="VerticalScrollBarVisibility" Value="Auto" />
       <Setter Property="BorderThickness" Value="0" />
-      <Setter Property="Padding" Value="12" />
-      <Setter Property="Background" Value="#0F172A" />
-      <Setter Property="Foreground" Value="#E2E8F0" />
-      <Setter Property="CaretBrush" Value="#F8FAFC" />
-      <Setter Property="SelectionBrush" Value="#334155" />
-      <Setter Property="SelectionTextBrush" Value="#F8FAFC" />
+      <Setter Property="Padding" Value="10" />
+      <Setter Property="Background" Value="{DynamicResource EditorBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+      <Setter Property="CaretBrush" Value="{DynamicResource TextPrimaryBrush}" />
+      <Setter Property="SelectionBrush" Value="{DynamicResource SelectionBrush}" />
+      <Setter Property="SelectionTextBrush" Value="{DynamicResource TextPrimaryBrush}" />
     </Style>
 
     <Style TargetType="TextBox" x:Key="SettingTextBox">
-      <Setter Property="Height" Value="32" />
+      <Setter Property="Height" Value="31" />
       <Setter Property="Padding" Value="8,4" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
-      <Setter Property="Background" Value="#0B1324" />
-      <Setter Property="Foreground" Value="#E2E8F0" />
-      <Setter Property="CaretBrush" Value="#F8FAFC" />
-      <Setter Property="BorderBrush" Value="#334155" />
+      <Setter Property="Background" Value="{DynamicResource ControlBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+      <Setter Property="CaretBrush" Value="{DynamicResource TextPrimaryBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
       <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="SelectionBrush" Value="#334155" />
+      <Setter Property="SelectionBrush" Value="{DynamicResource SelectionBrush}" />
     </Style>
 
-    <Style TargetType="RadioButton">
-      <Setter Property="Foreground" Value="#CBD5E1" />
-      <Setter Property="Margin" Value="0,0,14,0" />
-      <Setter Property="VerticalAlignment" Value="Center" />
+    <Style TargetType="ComboBox" x:Key="SettingComboBox">
+      <Setter Property="Height" Value="31" />
+      <Setter Property="Padding" Value="7,3" />
+      <Setter Property="Background" Value="{DynamicResource ControlBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+      <Setter Property="TextElement.Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="Template" Value="{StaticResource ThemedComboBoxTemplate}" />
+    </Style>
+
+    <Style TargetType="ComboBoxItem">
+      <Setter Property="Background" Value="{DynamicResource ControlBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+      <Setter Property="Padding" Value="8,5" />
+      <Style.Triggers>
+        <Trigger Property="IsHighlighted" Value="True">
+          <Setter Property="Background" Value="{DynamicResource ControlHoverBrush}" />
+          <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        </Trigger>
+        <Trigger Property="IsSelected" Value="True">
+          <Setter Property="Background" Value="{DynamicResource SelectionBrush}" />
+          <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        </Trigger>
+      </Style.Triggers>
     </Style>
 
     <Style TargetType="CheckBox">
-      <Setter Property="Foreground" Value="#CBD5E1" />
+      <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
       <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style TargetType="Expander" x:Key="SettingExpander">
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+      <Setter Property="Margin" Value="0,0,0,8" />
+      <Setter Property="IsExpanded" Value="False" />
+    </Style>
+
+    <Style TargetType="TextBlock" x:Key="SettingLabelText">
+      <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+    </Style>
+
+    <Style TargetType="TextBlock" x:Key="MutedText">
+      <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
     </Style>
   </Window.Resources>
 
-  <Grid>
+  <Grid Background="{DynamicResource WindowBackgroundBrush}">
     <Grid.RowDefinitions>
-      <RowDefinition Height="56" />
+      <RowDefinition Height="54" />
       <RowDefinition Height="*" />
-      <RowDefinition Height="34" />
+      <RowDefinition Height="32" />
     </Grid.RowDefinitions>
 
-    <Border Grid.Row="0" Background="#020617" BorderBrush="#1E293B" BorderThickness="0,0,0,1" Padding="12,10">
+    <Border Grid.Row="0"
+            Background="{DynamicResource TopBarBrush}"
+            BorderBrush="{DynamicResource BorderBrush}"
+            BorderThickness="0,0,0,1"
+            Padding="10,9">
       <DockPanel LastChildFill="True">
         <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
           <Button Content="Open" Click="Open_Click" />
           <Button x:Name="FormatButton"
                   Content="Format  Ctrl+Enter"
                   Click="Format_Click"
-                  Background="#2563EB"
-                  BorderBrush="#3B82F6"
-                  Foreground="#FFFFFF" />
-          <Button Content="Copy Output" Click="CopyOutput_Click" />
-          <Button Content="Replace Input" Click="ReplaceInput_Click" />
-          <Button Content="Save Output" Click="SaveOutput_Click" />
+                  Style="{StaticResource PrimaryButton}" />
+          <Button Content="Copy" Click="CopyOutput_Click" />
+          <Button Content="Replace" Click="ReplaceInput_Click" />
+          <Button Content="Save" Click="SaveOutput_Click" />
           <Button Content="Clear" Click="Clear_Click" />
+          <Button x:Name="PreferencesButton"
+                  Content="Preferences"
+                  Click="Preferences_Click"
+                  Margin="4,0,8,0" />
         </StackPanel>
 
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-          <Border Background="#172033" BorderBrush="#334155" BorderThickness="1" CornerRadius="4" Padding="10,6">
-            <TextBlock x:Name="DialectText" Text="Dialect: Auto" Foreground="#CBD5E1" FontWeight="SemiBold" />
+          <Button x:Name="ThemeButton"
+                  Content="Theme"
+                  Click="Theme_Click"
+                  MinWidth="92"
+                  Margin="0,0,8,0" />
+          <Border Background="{DynamicResource SurfaceAltBrush}"
+                  BorderBrush="{DynamicResource BorderBrush}"
+                  BorderThickness="1"
+                  CornerRadius="4"
+                  Padding="9,5">
+            <TextBlock x:Name="DialectText"
+                       Text="Dialect: Auto"
+                       Foreground="{DynamicResource TextSecondaryBrush}"
+                       FontWeight="SemiBold" />
           </Border>
         </StackPanel>
       </DockPanel>
     </Border>
 
-    <Grid Grid.Row="1" Margin="12">
+    <Grid Grid.Row="1" Margin="10">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*" />
-        <ColumnDefinition Width="14" />
-        <ColumnDefinition Width="290" />
-        <ColumnDefinition Width="14" />
+        <ColumnDefinition Width="10" />
         <ColumnDefinition Width="*" />
       </Grid.ColumnDefinitions>
 
-      <Border Grid.Column="0" Background="#0F172A" BorderBrush="#334155" BorderThickness="1" CornerRadius="6">
+      <Border Grid.Column="0"
+              Background="{DynamicResource SurfaceBrush}"
+              BorderBrush="{DynamicResource BorderBrush}"
+              BorderThickness="1"
+              CornerRadius="6">
         <Grid>
           <Grid.RowDefinitions>
-            <RowDefinition Height="38" />
+            <RowDefinition Height="36" />
             <RowDefinition Height="*" />
           </Grid.RowDefinitions>
-          <Border Grid.Row="0" Background="#111827" BorderBrush="#334155" BorderThickness="0,0,0,1" Padding="12,0">
+          <Border Grid.Row="0"
+                  Background="{DynamicResource SurfaceAltBrush}"
+                  BorderBrush="{DynamicResource BorderBrush}"
+                  BorderThickness="0,0,0,1"
+                  Padding="10,0">
             <DockPanel>
-              <TextBlock Text="Input" FontWeight="SemiBold" Foreground="#F1F5F9" VerticalAlignment="Center" />
-              <TextBlock x:Name="InputStatsText" DockPanel.Dock="Right" Foreground="#94A3B8" VerticalAlignment="Center" />
+              <TextBlock Text="Input" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <TextBlock x:Name="InputStatsText" DockPanel.Dock="Right" Style="{StaticResource MutedText}" VerticalAlignment="Center" />
             </DockPanel>
           </Border>
-          <TextBox x:Name="InputBox" Grid.Row="1" Style="{StaticResource EditorTextBox}" TextChanged="InputBox_TextChanged" />
+          <TextBox x:Name="InputBox"
+                   Grid.Row="1"
+                   Style="{StaticResource EditorTextBox}"
+                   TextChanged="InputBox_TextChanged" />
         </Grid>
       </Border>
 
-      <Border Grid.Column="2" Background="#0F172A" BorderBrush="#334155" BorderThickness="1" CornerRadius="6">
+      <Border Grid.Column="2"
+              Background="{DynamicResource SurfaceBrush}"
+              BorderBrush="{DynamicResource BorderBrush}"
+              BorderThickness="1"
+              CornerRadius="6">
         <Grid>
           <Grid.RowDefinitions>
-            <RowDefinition Height="38" />
+            <RowDefinition Height="36" />
             <RowDefinition Height="*" />
           </Grid.RowDefinitions>
-
-          <Border Grid.Row="0" Background="#111827" BorderBrush="#334155" BorderThickness="0,0,0,1" Padding="12,0">
+          <Border Grid.Row="0"
+                  Background="{DynamicResource SurfaceAltBrush}"
+                  BorderBrush="{DynamicResource BorderBrush}"
+                  BorderThickness="0,0,0,1"
+                  Padding="10,0">
             <DockPanel>
-              <TextBlock Text="Formatter Settings" FontWeight="SemiBold" Foreground="#F1F5F9" VerticalAlignment="Center" />
-              <TextBlock Text="Custom" DockPanel.Dock="Right" Foreground="#64748B" VerticalAlignment="Center" />
-            </DockPanel>
-          </Border>
-
-          <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <StackPanel Margin="16">
-              <TextBlock Text="Layout"
-                         FontSize="12"
-                         FontWeight="SemiBold"
-                         Foreground="#60A5FA"
-                         Margin="0,0,0,12" />
-
-              <TextBlock Text="Max line width" Foreground="#E2E8F0" FontWeight="SemiBold" />
-              <TextBlock Text="Wrap formatted SQL at this column. 60–400."
-                         Foreground="#64748B"
-                         FontSize="11"
-                         TextWrapping="Wrap"
-                         Margin="0,3,0,7" />
-              <TextBox x:Name="WidthBox"
-                       Style="{StaticResource SettingTextBox}"
-                       TextAlignment="Center"
-                       Margin="0,0,0,18" />
-
-              <TextBlock Text="Indent size" Foreground="#E2E8F0" FontWeight="SemiBold" />
-              <TextBlock Text="Indent nested structures by 2 or 4 spaces."
-                         Foreground="#64748B"
-                         FontSize="11"
-                         TextWrapping="Wrap"
-                         Margin="0,3,0,8" />
-              <StackPanel Orientation="Horizontal" Margin="0,0,0,18">
-                <RadioButton x:Name="Indent2Radio" GroupName="IndentSize" Content="2 spaces" />
-                <RadioButton x:Name="Indent4Radio" GroupName="IndentSize" Content="4 spaces" />
-              </StackPanel>
-
-              <Border Height="1" Background="#1E293B" Margin="0,0,0,18" />
-
-              <TextBlock Text="Keyword casing"
-                         FontSize="12"
-                         FontWeight="SemiBold"
-                         Foreground="#60A5FA"
-                         Margin="0,0,0,12" />
-              <StackPanel Margin="0,0,0,18">
-                <RadioButton x:Name="UppercaseRadio"
-                             GroupName="KeywordCasing"
-                             Content="UPPERCASE"
-                             Margin="0,0,0,9" />
-                <RadioButton x:Name="LowercaseRadio"
-                             GroupName="KeywordCasing"
-                             Content="lowercase"
-                             Margin="0,0,0,9" />
-                <RadioButton x:Name="PreserveCaseRadio"
-                             GroupName="KeywordCasing"
-                             Content="Preserve input casing"
-                             Margin="0" />
-              </StackPanel>
-
-              <Border Height="1" Background="#1E293B" Margin="0,0,0,18" />
-
-              <TextBlock Text="Comments"
-                         FontSize="12"
-                         FontWeight="SemiBold"
-                         Foreground="#60A5FA"
-                         Margin="0,0,0,12" />
-              <CheckBox x:Name="PreserveCommentsCheckBox"
-                        Content="Preserve comment line boundaries"
-                        Margin="0,0,0,6" />
-              <TextBlock Text="Keeps line and block comments anchored to their original line boundaries where possible."
-                         Foreground="#64748B"
-                         FontSize="11"
-                         TextWrapping="Wrap"
-                         Margin="20,0,0,20" />
-
-              <Border Background="#0B1324"
-                      BorderBrush="#1E293B"
-                      BorderThickness="1"
-                      CornerRadius="5"
-                      Padding="10"
-                      Margin="0,0,0,14">
-                <TextBlock x:Name="SettingsSummaryText"
-                           Foreground="#94A3B8"
-                           FontSize="11"
-                           TextWrapping="Wrap" />
-              </Border>
-
-              <Button Content="Apply Settings"
-                      Click="ApplySettings_Click"
-                      Background="#1D4ED8"
-                      BorderBrush="#2563EB"
-                      Foreground="#FFFFFF"
-                      HorizontalContentAlignment="Center"
-                      Margin="0,0,0,8" />
-              <Button Content="Reset Defaults"
-                      Click="ResetSettings_Click"
-                      HorizontalContentAlignment="Center"
-                      Margin="0" />
-
-              <TextBlock Text="Settings are also saved automatically when you format."
-                         Foreground="#64748B"
-                         FontSize="10"
-                         TextAlignment="Center"
-                         TextWrapping="Wrap"
-                         Margin="0,12,0,0" />
-            </StackPanel>
-          </ScrollViewer>
-        </Grid>
-      </Border>
-
-      <Border Grid.Column="4" Background="#0F172A" BorderBrush="#334155" BorderThickness="1" CornerRadius="6">
-        <Grid>
-          <Grid.RowDefinitions>
-            <RowDefinition Height="38" />
-            <RowDefinition Height="*" />
-          </Grid.RowDefinitions>
-          <Border Grid.Row="0" Background="#111827" BorderBrush="#334155" BorderThickness="0,0,0,1" Padding="12,0">
-            <DockPanel>
-              <TextBlock Text="Formatted Output" FontWeight="SemiBold" Foreground="#F1F5F9" VerticalAlignment="Center" />
-              <TextBlock x:Name="OutputStatsText" DockPanel.Dock="Right" Foreground="#94A3B8" VerticalAlignment="Center" />
+              <TextBlock Text="Formatted Output" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <TextBlock x:Name="OutputStatsText" DockPanel.Dock="Right" Style="{StaticResource MutedText}" VerticalAlignment="Center" />
             </DockPanel>
           </Border>
           <TextBox x:Name="OutputBox"
                    Grid.Row="1"
                    Style="{StaticResource EditorTextBox}"
                    IsReadOnly="True"
-                   Background="#0B1324" />
+                   Background="{DynamicResource EditorOutputBrush}" />
         </Grid>
       </Border>
     </Grid>
 
-    <Border Grid.Row="2" Background="#0F172A" BorderBrush="#334155" BorderThickness="0,1,0,0" Padding="12,0">
+    <Border Grid.Row="2"
+            Background="{DynamicResource SurfaceBrush}"
+            BorderBrush="{DynamicResource BorderBrush}"
+            BorderThickness="0,1,0,0"
+            Padding="10,0">
       <DockPanel>
-        <TextBlock x:Name="StatusText" Text="Ready" VerticalAlignment="Center" Foreground="#CBD5E1" />
+        <TextBlock x:Name="StatusText"
+                   Text="Ready"
+                   VerticalAlignment="Center"
+                   Foreground="{DynamicResource TextSecondaryBrush}" />
         <TextBlock DockPanel.Dock="Right"
                    Text="DB2 • PostgreSQL • T-SQL • Oracle / PL-SQL • SPARQL"
                    VerticalAlignment="Center"
-                   Foreground="#64748B" />
+                   Style="{StaticResource MutedText}" />
       </DockPanel>
     </Border>
+
+    <!-- Preferences live in a transient popup instead of permanently taking editor space. -->
+    <Popup x:Name="PreferencesPopup"
+           PlacementTarget="{Binding ElementName=PreferencesButton}"
+           Placement="Bottom"
+           HorizontalOffset="-115"
+           VerticalOffset="6"
+           AllowsTransparency="True"
+           PopupAnimation="Fade"
+           StaysOpen="False">
+      <Border Width="430"
+              Height="650"
+              Background="{DynamicResource SurfaceBrush}"
+              BorderBrush="{DynamicResource BorderBrush}"
+              BorderThickness="1"
+              CornerRadius="8">
+        <Border.Effect>
+          <DropShadowEffect BlurRadius="18" ShadowDepth="5" Opacity="0.28" />
+        </Border.Effect>
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="44" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="88" />
+          </Grid.RowDefinitions>
+
+          <Border Grid.Row="0"
+                  Background="{DynamicResource SurfaceAltBrush}"
+                  BorderBrush="{DynamicResource BorderBrush}"
+                  BorderThickness="0,0,0,1"
+                  CornerRadius="8,8,0,0"
+                  Padding="12,0">
+            <DockPanel>
+              <Button DockPanel.Dock="Right"
+                      Content="×"
+                      Click="PreferencesClose_Click"
+                      Width="32"
+                      Height="28"
+                      MinHeight="0"
+                      Padding="0"
+                      Margin="0"
+                      FontSize="16" />
+              <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="Formatter Preferences" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBlock Text="  •  " Style="{StaticResource MutedText}" VerticalAlignment="Center" />
+                <TextBlock x:Name="SettingsModeText" Text="Custom" Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center" />
+              </StackPanel>
+            </DockPanel>
+          </Border>
+
+          <ScrollViewer Grid.Row="1"
+                        VerticalScrollBarVisibility="Auto"
+                        HorizontalScrollBarVisibility="Disabled"
+                        Background="{DynamicResource SurfaceBrush}">
+            <StackPanel Margin="12">
+              <TextBlock Text="Preset" FontWeight="SemiBold" />
+              <ComboBox x:Name="PresetCombo"
+                        Style="{StaticResource SettingComboBox}"
+                        SelectionChanged="PresetCombo_SelectionChanged"
+                        Margin="0,6,0,10">
+                <ComboBoxItem Content="Preserve current formatter" Tag="Preserve" />
+                <ComboBoxItem Content="IBM expanded" Tag="IBMExpanded" />
+                <ComboBoxItem Content="SQL Prompt-like" Tag="SqlPrompt" />
+                <ComboBoxItem Content="Compact" Tag="Compact" />
+                <ComboBoxItem Content="Custom" Tag="Custom" />
+              </ComboBox>
+
+              <CheckBox x:Name="AdvancedEnabledCheckBox"
+                        Content="Enable advanced beautifier"
+                        Margin="0,0,0,12" />
+
+              <Expander Header="General" Style="{StaticResource SettingExpander}" IsExpanded="True">
+                <StackPanel Margin="8,8,0,6">
+                  <TextBlock Text="Max line width" Style="{StaticResource SettingLabelText}" />
+                  <TextBox x:Name="WidthBox" Style="{StaticResource SettingTextBox}" TextAlignment="Center" Margin="0,4,0,9" />
+
+                  <TextBlock Text="Indent size" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="IndentCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,9">
+                    <ComboBoxItem Content="2 spaces" Tag="2" />
+                    <ComboBoxItem Content="4 spaces" Tag="4" />
+                  </ComboBox>
+
+                  <TextBlock Text="Keyword casing" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="KeywordCasingCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,9">
+                    <ComboBoxItem Content="UPPERCASE" Tag="Uppercase" />
+                    <ComboBoxItem Content="lowercase" Tag="Lowercase" />
+                    <ComboBoxItem Content="Preserve input" Tag="Preserve" />
+                  </ComboBox>
+
+                  <CheckBox x:Name="PreserveCommentsCheckBox" Content="Preserve comment line boundaries" />
+                </StackPanel>
+              </Expander>
+
+              <Expander Header="Parentheses" Style="{StaticResource SettingExpander}">
+                <StackPanel Margin="8,8,0,6">
+                  <TextBlock Text="Function name → (" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="FunctionParenSpaceCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,8">
+                    <ComboBoxItem Content="Preserve" Tag="Preserve" />
+                    <ComboBoxItem Content="COUNT(...)" Tag="NoSpace" />
+                    <ComboBoxItem Content="COUNT (...)" Tag="Space" />
+                  </ComboBox>
+
+                  <TextBlock Text="Inside parentheses" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="InsideParenCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,8">
+                    <ComboBoxItem Content="Preserve" Tag="Preserve" />
+                    <ComboBoxItem Content="(value)" Tag="NoSpace" />
+                    <ComboBoxItem Content="( value )" Tag="Space" />
+                  </ComboBox>
+
+                  <TextBlock Text="Subquery opening" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="SubqueryOpeningCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,8">
+                    <ComboBoxItem Content="Preserve" Tag="Preserve" />
+                    <ComboBoxItem Content="(SELECT ..." Tag="SameLine" />
+                    <ComboBoxItem Content="( ↵ SELECT ..." Tag="NewLine" />
+                  </ComboBox>
+
+                  <TextBlock Text="Subquery closing" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="SubqueryClosingCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,8">
+                    <ComboBoxItem Content="Preserve" Tag="Preserve" />
+                    <ComboBoxItem Content="... ) same line" Tag="SameLine" />
+                    <ComboBoxItem Content="... ↵ )" Tag="NewLine" />
+                  </ComboBox>
+
+                  <TextBlock Text="CTE AS parenthesis" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="CteParenCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,0">
+                    <ComboBoxItem Content="Preserve" Tag="Preserve" />
+                    <ComboBoxItem Content="AS (SELECT ..." Tag="SameLine" />
+                    <ComboBoxItem Content="AS ↵ ( ↵ SELECT ..." Tag="NewLine" />
+                  </ComboBox>
+                </StackPanel>
+              </Expander>
+
+              <Expander Header="Lists" Style="{StaticResource SettingExpander}">
+                <StackPanel Margin="8,8,0,6">
+                  <TextBlock Text="SELECT list" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="SelectListCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,8" />
+
+                  <TextBlock Text="GROUP BY list" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="GroupByListCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,8" />
+
+                  <TextBlock Text="ORDER BY list" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="OrderByListCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,8" />
+
+                  <TextBlock Text="UPDATE SET list" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="UpdateSetListCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,8" />
+
+                  <TextBlock Text="INSERT column list" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="InsertColumnsListCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,8" />
+
+                  <TextBlock Text="VALUES list" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="ValuesListCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,8" />
+
+                  <TextBlock Text="IN (...) list" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="InListCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,8" />
+
+                  <TextBlock Text="Function arguments" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="FunctionArgsListCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,8" />
+
+                  <TextBlock Text="Comma style" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="CommaStyleCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,8">
+                    <ComboBoxItem Content="Preserve" Tag="Preserve" />
+                    <ComboBoxItem Content="Trailing: item," Tag="Trailing" />
+                    <ComboBoxItem Content="Leading: , item" Tag="Leading" />
+                  </ComboBox>
+
+                  <TextBlock Text="Continuation indentation" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="ContinuationIndentCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,0">
+                    <ComboBoxItem Content="Preserve" Tag="Preserve" />
+                    <ComboBoxItem Content="Align to first item" Tag="Align" />
+                    <ComboBoxItem Content="Indent one level" Tag="Indent" />
+                  </ComboBox>
+                </StackPanel>
+              </Expander>
+
+              <Expander Header="Clauses &amp; joins" Style="{StaticResource SettingExpander}">
+                <StackPanel Margin="8,8,0,6">
+                  <TextBlock Text="Major clause alignment" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="ClauseAlignmentCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,8">
+                    <ComboBoxItem Content="Preserve" Tag="Preserve" />
+                    <ComboBoxItem Content="IBM right-aligned grid" Tag="IBM" />
+                    <ComboBoxItem Content="Left aligned" Tag="Left" />
+                    <ComboBoxItem Content="Indented" Tag="Indented" />
+                  </ComboBox>
+
+                  <TextBlock Text="AND / OR position" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="BooleanPositionCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,8">
+                    <ComboBoxItem Content="Preserve" Tag="Preserve" />
+                    <ComboBoxItem Content="Leading" Tag="Leading" />
+                    <ComboBoxItem Content="Trailing" Tag="Trailing" />
+                  </ComboBox>
+
+                  <TextBlock Text="JOIN layout" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="JoinLayoutCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,8">
+                    <ComboBoxItem Content="Preserve" Tag="Preserve" />
+                    <ComboBoxItem Content="Each JOIN on new line" Tag="EachNewLine" />
+                    <ComboBoxItem Content="Compact when it fits" Tag="CompactWhenPossible" />
+                  </ComboBox>
+
+                  <TextBlock Text="ON clause" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="OnClauseCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,8">
+                    <ComboBoxItem Content="Preserve" Tag="Preserve" />
+                    <ComboBoxItem Content="Same line as JOIN" Tag="SameLine" />
+                    <ComboBoxItem Content="New line" Tag="NewLine" />
+                  </ComboBox>
+
+                  <TextBlock Text="CTE header" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="CteLayoutCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,8">
+                    <ComboBoxItem Content="Preserve" Tag="Preserve" />
+                    <ComboBoxItem Content="Compact name + AS" Tag="CompactHeader" />
+                    <ComboBoxItem Content="Expanded name / AS" Tag="ExpandedHeader" />
+                  </ComboBox>
+
+                  <CheckBox x:Name="BlankLineBetweenCtesCheckBox" Content="Blank line between CTEs" />
+                </StackPanel>
+              </Expander>
+
+              <Expander Header="CASE expressions" Style="{StaticResource SettingExpander}">
+                <StackPanel Margin="8,8,0,6">
+                  <TextBlock Text="CASE style" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="CaseStyleCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,8">
+                    <ComboBoxItem Content="Preserve" Tag="Preserve" />
+                    <ComboBoxItem Content="Always multiline where safe" Tag="Multiline" />
+                    <ComboBoxItem Content="Compact short CASE" Tag="CompactShort" />
+                  </ComboBox>
+
+                  <TextBlock Text="THEN result" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="ThenResultCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,8">
+                    <ComboBoxItem Content="Preserve" Tag="Preserve" />
+                    <ComboBoxItem Content="Same line" Tag="SameLine" />
+                    <ComboBoxItem Content="New line" Tag="NewLine" />
+                  </ComboBox>
+
+                  <TextBlock Text="ELSE result" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="ElseResultCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,0">
+                    <ComboBoxItem Content="Preserve" Tag="Preserve" />
+                    <ComboBoxItem Content="Same line" Tag="SameLine" />
+                    <ComboBoxItem Content="New line" Tag="NewLine" />
+                  </ComboBox>
+                </StackPanel>
+              </Expander>
+
+              <Expander Header="Spacing" Style="{StaticResource SettingExpander}">
+                <StackPanel Margin="8,8,0,6">
+                  <TextBlock Text="Comparison operators" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="ComparisonSpacingCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,8">
+                    <ComboBoxItem Content="Preserve" Tag="Preserve" />
+                    <ComboBoxItem Content="A = B" Tag="Spaced" />
+                    <ComboBoxItem Content="A=B" Tag="Tight" />
+                  </ComboBox>
+
+                  <TextBlock Text="After comma" Style="{StaticResource SettingLabelText}" />
+                  <ComboBox x:Name="AfterCommaCombo" Style="{StaticResource SettingComboBox}" Margin="0,4,0,0">
+                    <ComboBoxItem Content="Preserve" Tag="Preserve" />
+                    <ComboBoxItem Content=", value" Tag="Space" />
+                    <ComboBoxItem Content=",value" Tag="NoSpace" />
+                  </ComboBox>
+                </StackPanel>
+              </Expander>
+            </StackPanel>
+          </ScrollViewer>
+
+          <Border Grid.Row="2"
+                  Background="{DynamicResource SurfaceAltBrush}"
+                  BorderBrush="{DynamicResource BorderBrush}"
+                  BorderThickness="0,1,0,0"
+                  CornerRadius="0,0,8,8"
+                  Padding="10">
+            <Grid>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="*" />
+                <RowDefinition Height="32" />
+              </Grid.RowDefinitions>
+              <TextBlock x:Name="SettingsSummaryText"
+                         Style="{StaticResource MutedText}"
+                         FontSize="10"
+                         TextWrapping="Wrap"
+                         VerticalAlignment="Center" />
+              <Grid Grid.Row="1" Margin="0,6,0,0">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="8" />
+                  <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0"
+                        Content="Apply"
+                        Click="ApplySettings_Click"
+                        Style="{StaticResource PrimaryButton}"
+                        Margin="0" />
+                <Button Grid.Column="2" Content="Reset" Click="ResetSettings_Click" Margin="0" />
+              </Grid>
+            </Grid>
+          </Border>
+        </Grid>
+      </Border>
+    </Popup>
   </Grid>
 </Window>

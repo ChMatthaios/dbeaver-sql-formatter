@@ -1,20 +1,71 @@
 using System.IO;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 
 namespace SqlFormatterApp;
 
-public sealed record FormatterPreferences(
-    int MaxLineLength,
-    int IndentSize,
-    string KeywordCasing,
-    bool PreserveCommentLineBoundaries)
+public sealed class FormatterPreferences
 {
-    public static FormatterPreferences Defaults { get; } = new(
-        MaxLineLength: 120,
-        IndentSize: 2,
-        KeywordCasing: "Uppercase",
-        PreserveCommentLineBoundaries: true);
+    public int MaxLineLength { get; set; } = 120;
+    public int IndentSize { get; set; } = 2;
+    public string KeywordCasing { get; set; } = "Uppercase";
+    public bool PreserveCommentLineBoundaries { get; set; } = true;
+    public AdvancedBeautifierPreferences Advanced { get; set; } = new();
+}
+
+public sealed class AdvancedBeautifierPreferences
+{
+    public bool Enabled { get; set; } = true;
+    public ParenthesisPreferences Parentheses { get; set; } = new();
+    public ListPreferences Lists { get; set; } = new();
+    public ClausePreferences Clauses { get; set; } = new();
+    public CasePreferences Case { get; set; } = new();
+    public SpacingPreferences Spacing { get; set; } = new();
+}
+
+public sealed class ParenthesisPreferences
+{
+    public string FunctionSpaceBeforeParen { get; set; } = "Preserve";
+    public string InsideParentheses { get; set; } = "Preserve";
+    public string SubqueryOpening { get; set; } = "Preserve";
+    public string SubqueryClosing { get; set; } = "Preserve";
+    public string CteAsParenthesis { get; set; } = "Preserve";
+}
+
+public sealed class ListPreferences
+{
+    public string Select { get; set; } = "Preserve";
+    public string GroupBy { get; set; } = "Preserve";
+    public string OrderBy { get; set; } = "Preserve";
+    public string UpdateSet { get; set; } = "Preserve";
+    public string InsertColumns { get; set; } = "Preserve";
+    public string Values { get; set; } = "Preserve";
+    public string InList { get; set; } = "Preserve";
+    public string FunctionArguments { get; set; } = "Preserve";
+    public string CommaStyle { get; set; } = "Preserve";
+    public string ContinuationIndent { get; set; } = "Preserve";
+}
+
+public sealed class ClausePreferences
+{
+    public string Alignment { get; set; } = "Preserve";
+    public string BooleanOperatorPosition { get; set; } = "Preserve";
+    public string JoinLayout { get; set; } = "Preserve";
+    public string OnClause { get; set; } = "Preserve";
+    public string CteLayout { get; set; } = "Preserve";
+    public bool BlankLineBetweenCtes { get; set; }
+}
+
+public sealed class CasePreferences
+{
+    public string Style { get; set; } = "Preserve";
+    public string ThenResult { get; set; } = "Preserve";
+    public string ElseResult { get; set; } = "Preserve";
+}
+
+public sealed class SpacingPreferences
+{
+    public string ComparisonOperators { get; set; } = "Preserve";
+    public string AfterComma { get; set; } = "Preserve";
 }
 
 public static class FormatterSettings
@@ -24,112 +75,115 @@ public static class FormatterSettings
     private static readonly string SettingsPath = Path.Combine(SettingsDirectory, "settings.json");
     private static readonly string ExamplePath = Path.Combine(SettingsDirectory, "settings.example.json");
 
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        WriteIndented = true
+    };
+
     public static FormatterPreferences Read()
     {
-        var defaults = FormatterPreferences.Defaults;
-
         try
         {
             EnsureSettingsFile();
-            var root = JsonNode.Parse(File.ReadAllText(SettingsPath)) as JsonObject;
-            if (root is null)
-            {
-                return defaults;
-            }
-
-            var width = ReadInt(root, "maxLineLength", defaults.MaxLineLength);
-            width = Math.Clamp(width, 60, 400);
-
-            var indent = ReadInt(root, "indentSize", defaults.IndentSize);
-            if (indent is not 2 and not 4)
-            {
-                indent = defaults.IndentSize;
-            }
-
-            var casing = ReadString(root, "keywordCasing", defaults.KeywordCasing);
-            casing = NormalizeKeywordCasing(casing);
-
-            var preserveComments = ReadBool(
-                root,
-                "preserveCommentLineBoundaries",
-                defaults.PreserveCommentLineBoundaries);
-
-            return new FormatterPreferences(width, indent, casing, preserveComments);
+            var settings = JsonSerializer.Deserialize<FormatterPreferences>(File.ReadAllText(SettingsPath), JsonOptions)
+                           ?? CreateDefaults();
+            Normalize(settings);
+            return settings;
         }
         catch
         {
-            // The PowerShell formatter has its own safe defaults as well.
-            return defaults;
+            return CreateDefaults();
         }
     }
-
-    public static void Write(FormatterPreferences preferences)
-    {
-        var normalized = new FormatterPreferences(
-            MaxLineLength: Math.Clamp(preferences.MaxLineLength, 60, 400),
-            IndentSize: preferences.IndentSize == 4 ? 4 : 2,
-            KeywordCasing: NormalizeKeywordCasing(preferences.KeywordCasing),
-            PreserveCommentLineBoundaries: preferences.PreserveCommentLineBoundaries);
-
-        Directory.CreateDirectory(SettingsDirectory);
-
-        var root = new JsonObject
-        {
-            ["maxLineLength"] = normalized.MaxLineLength,
-            ["indentSize"] = normalized.IndentSize,
-            ["keywordCasing"] = normalized.KeywordCasing,
-            ["preserveCommentLineBoundaries"] = normalized.PreserveCommentLineBoundaries
-        };
-
-        File.WriteAllText(
-            SettingsPath,
-            root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-    }
-
-    public static void ResetToDefaults() => Write(FormatterPreferences.Defaults);
 
     public static int ReadMaxLineLength() => Read().MaxLineLength;
 
+    public static void Write(FormatterPreferences preferences)
+    {
+        Normalize(preferences);
+        Directory.CreateDirectory(SettingsDirectory);
+        File.WriteAllText(SettingsPath, JsonSerializer.Serialize(preferences, JsonOptions));
+    }
+
     public static void WriteMaxLineLength(int width)
     {
-        var current = Read();
-        Write(current with { MaxLineLength = Math.Clamp(width, 60, 400) });
+        var settings = Read();
+        settings.MaxLineLength = width;
+        Write(settings);
     }
 
-    private static int ReadInt(JsonObject root, string name, int fallback)
+    public static FormatterPreferences ResetToDefaults()
     {
-        return root[name] is JsonValue value && value.TryGetValue<int>(out var result)
-            ? result
-            : fallback;
+        var defaults = CreateDefaults();
+        Write(defaults);
+        return defaults;
     }
 
-    private static string ReadString(JsonObject root, string name, string fallback)
+    public static FormatterPreferences CreateDefaults() => new();
+
+    private static void Normalize(FormatterPreferences settings)
     {
-        return root[name] is JsonValue value && value.TryGetValue<string>(out var result) && !string.IsNullOrWhiteSpace(result)
-            ? result
-            : fallback;
+        settings.MaxLineLength = Math.Clamp(settings.MaxLineLength, 60, 400);
+        settings.IndentSize = settings.IndentSize == 4 ? 4 : 2;
+        settings.KeywordCasing = Allowed(settings.KeywordCasing, "Uppercase", "Lowercase", "Preserve");
+        settings.Advanced ??= new AdvancedBeautifierPreferences();
+        settings.Advanced.Parentheses ??= new ParenthesisPreferences();
+        settings.Advanced.Lists ??= new ListPreferences();
+        settings.Advanced.Clauses ??= new ClausePreferences();
+        settings.Advanced.Case ??= new CasePreferences();
+        settings.Advanced.Spacing ??= new SpacingPreferences();
+
+        var p = settings.Advanced.Parentheses;
+        p.FunctionSpaceBeforeParen = Allowed(p.FunctionSpaceBeforeParen, "Preserve", "NoSpace", "Space");
+        p.InsideParentheses = Allowed(p.InsideParentheses, "Preserve", "NoSpace", "Space");
+        p.SubqueryOpening = Allowed(p.SubqueryOpening, "Preserve", "SameLine", "NewLine");
+        p.SubqueryClosing = Allowed(p.SubqueryClosing, "Preserve", "SameLine", "NewLine");
+        p.CteAsParenthesis = Allowed(p.CteAsParenthesis, "Preserve", "SameLine", "NewLine");
+
+        var l = settings.Advanced.Lists;
+        l.Select = ListStyle(l.Select);
+        l.GroupBy = ListStyle(l.GroupBy);
+        l.OrderBy = ListStyle(l.OrderBy);
+        l.UpdateSet = ListStyle(l.UpdateSet);
+        l.InsertColumns = ListStyle(l.InsertColumns);
+        l.Values = ListStyle(l.Values);
+        l.InList = ListStyle(l.InList);
+        l.FunctionArguments = ListStyle(l.FunctionArguments);
+        l.CommaStyle = Allowed(l.CommaStyle, "Preserve", "Trailing", "Leading");
+        l.ContinuationIndent = Allowed(l.ContinuationIndent, "Preserve", "Align", "Indent");
+
+        var c = settings.Advanced.Clauses;
+        c.Alignment = Allowed(c.Alignment, "Preserve", "IBM", "Left", "Indented");
+        c.BooleanOperatorPosition = Allowed(c.BooleanOperatorPosition, "Preserve", "Leading", "Trailing");
+        c.JoinLayout = Allowed(c.JoinLayout, "Preserve", "EachNewLine", "CompactWhenPossible");
+        c.OnClause = Allowed(c.OnClause, "Preserve", "SameLine", "NewLine");
+        c.CteLayout = Allowed(c.CteLayout, "Preserve", "CompactHeader", "ExpandedHeader");
+
+        var k = settings.Advanced.Case;
+        k.Style = Allowed(k.Style, "Preserve", "Multiline", "CompactShort");
+        k.ThenResult = Allowed(k.ThenResult, "Preserve", "SameLine", "NewLine");
+        k.ElseResult = Allowed(k.ElseResult, "Preserve", "SameLine", "NewLine");
+
+        var s = settings.Advanced.Spacing;
+        s.ComparisonOperators = Allowed(s.ComparisonOperators, "Preserve", "Spaced", "Tight");
+        s.AfterComma = Allowed(s.AfterComma, "Preserve", "Space", "NoSpace");
     }
 
-    private static bool ReadBool(JsonObject root, string name, bool fallback)
-    {
-        return root[name] is JsonValue value && value.TryGetValue<bool>(out var result)
-            ? result
-            : fallback;
-    }
+    private static string ListStyle(string? value) =>
+        Allowed(value, "Preserve", "Compact", "Wrap", "OnePerLine");
 
-    private static string NormalizeKeywordCasing(string? value)
+    private static string Allowed(string? value, params string[] allowed)
     {
-        if (string.Equals(value, "Lowercase", StringComparison.OrdinalIgnoreCase))
+        foreach (var item in allowed)
         {
-            return "Lowercase";
+            if (string.Equals(value, item, StringComparison.OrdinalIgnoreCase))
+            {
+                return item;
+            }
         }
-
-        if (string.Equals(value, "Preserve", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Preserve";
-        }
-
-        return "Uppercase";
+        return allowed[0];
     }
 
     private static void EnsureSettingsFile()
@@ -146,6 +200,6 @@ public static class FormatterSettings
             return;
         }
 
-        Write(FormatterPreferences.Defaults);
+        Write(CreateDefaults());
     }
 }

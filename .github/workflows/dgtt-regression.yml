@@ -1,0 +1,124 @@
+name: DGTT formatting regression
+
+on:
+  pull_request:
+    paths:
+      - 'examples/sample-db2.sql'
+      - 'format-dgtt-ui.ps1'
+      - 'format-case-arithmetic.ps1'
+      - 'format-case-branches.ps1'
+      - 'format-ui-script.ps1'
+      - 'format-ui.ps1'
+      - 'settings/**'
+      - '.github/workflows/dgtt-regression.yml'
+
+jobs:
+  dgtt-formatting:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify DGTT container and CASE arithmetic chains
+        shell: pwsh
+        run: |
+          $settings = @{
+            maxLineLength = 120
+            indentSize = 2
+            keywordCasing = 'Uppercase'
+            preserveCommentLineBoundaries = $true
+            advanced = @{
+              enabled = $true
+              parentheses = @{
+                functionSpaceBeforeParen = 'Preserve'
+                insideParentheses = 'Space'
+                subqueryOpening = 'Preserve'
+                subqueryClosing = 'Preserve'
+                cteAsParenthesis = 'Preserve'
+              }
+              lists = @{
+                select = 'OnePerLine'
+                groupBy = 'OnePerLine'
+                orderBy = 'Wrap'
+                updateSet = 'OnePerLine'
+                insertColumns = 'OnePerLine'
+                values = 'Wrap'
+                inList = 'Wrap'
+                functionArguments = 'Wrap'
+                commaStyle = 'Trailing'
+                continuationIndent = 'Align'
+              }
+              clauses = @{
+                alignment = 'IBM'
+                booleanOperatorPosition = 'Leading'
+                joinLayout = 'EachNewLine'
+                onClause = 'NewLine'
+                cteLayout = 'ExpandedHeader'
+                blankLineBetweenCtes = $false
+              }
+              case = @{
+                style = 'Multiline'
+                thenResult = 'NewLine'
+                elseResult = 'NewLine'
+              }
+              spacing = @{
+                comparisonOperators = 'Spaced'
+                afterComma = 'Space'
+              }
+            }
+          }
+          $settings | ConvertTo-Json -Depth 10 | Set-Content .\settings\settings.json
+
+          $inputSql = Get-Content .\examples\sample-db2.sql -Raw
+          $ui = $inputSql |
+            powershell -NoProfile -ExecutionPolicy Bypass -File .\format-ui-script.ps1 |
+            Out-String
+          $ui = $ui.TrimEnd("`r", "`n")
+
+          if ($ui -notmatch '(?m)^DECLARE GLOBAL TEMPORARY TABLE SESSION\.REC_HIERARCHY AS \(\r?$') {
+            Write-Host $ui
+            throw 'DGTT header did not keep the opening parenthesis as the parent container boundary.'
+          }
+          if ($ui -notmatch '(?m)^\s+WITH\s+P4H\b') {
+            Write-Host $ui
+            throw 'DGTT child query was not placed on a new indented line.'
+          }
+          if ($ui -match '(?im)^DECLARE GLOBAL TEMPORARY TABLE[^\r\n]*AS[ \t]*\([ \t]*WITH\s+P4H') {
+            Write-Host $ui
+            throw 'DGTT child WITH query collapsed back onto the parent AS ( line.'
+          }
+
+          $revStart = $ui.IndexOf('REV_MISMATCH_CNT')
+          if ($revStart -lt 0) {
+            Write-Host $ui
+            throw 'REV_MISMATCH_CNT alias disappeared.'
+          }
+
+          # Reject only END + CASE on one physical line. Newlines between sibling
+          # CASE expressions are the desired layout and must not count as failure.
+          if ($ui -match '(?i)END[ \t]*\+[ \t]*CASE') {
+            Write-Host $ui
+            throw 'Sibling arithmetic CASE expressions are still attached as END + CASE on one line.'
+          }
+
+          $plusCaseCount = [regex]::Matches($ui, '(?im)^\s*\+\s+CASE\s*$').Count
+          if ($plusCaseCount -lt 10) {
+            Write-Host $ui
+            throw "Expected many aligned + CASE sibling lines; found $plusCaseCount."
+          }
+
+          $maxLeading = 0
+          foreach ($line in ($ui -split "`r?`n")) {
+            if ($line -match '^(\s+)\+\s+CASE\s*$') {
+              $maxLeading = [Math]::Max($maxLeading, $Matches[1].Length)
+            }
+          }
+          if ($maxLeading -gt 50) {
+            Write-Host $ui
+            throw "CASE-chain indentation drifted too far right: $maxLeading leading spaces."
+          }
+
+          if ($ui -notmatch '(?m)^\)\r?\nWITH DATA WITH REPLACE ON COMMIT PRESERVE ROWS;') {
+            Write-Host $ui
+            throw 'DGTT closing parenthesis/trailing WITH DATA clause placement changed.'
+          }
