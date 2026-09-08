@@ -1,11 +1,11 @@
 <#
     Formats one .sql file by calling format-sql.ps1.
 
-    Usage:
-      .\format-file.ps1 .\input.sql
-      .\format-file.ps1 .\input.sql -OutFile .\output.sql
-      .\format-file.ps1 .\input.sql -InPlace
-      .\format-file.ps1 -help
+    Usage from the repository root:
+      .\formatter\format-file.ps1 .\input.sql
+      .\formatter\format-file.ps1 .\input.sql -OutFile .\output.sql
+      .\formatter\format-file.ps1 .\input.sql -InPlace
+      .\formatter\format-file.ps1 -help
 #>
 
 param(
@@ -24,16 +24,16 @@ function Show-Help {
     Write-Host ""
     Write-Host "DBeaver SQL Formatter - File Runner"
     Write-Host ""
-    Write-Host "Usage:"
-    Write-Host "  .\format-file.ps1 .\input.sql"
-    Write-Host "  .\format-file.ps1 .\input.sql -OutFile .\output.sql"
-    Write-Host "  .\format-file.ps1 .\input.sql -InPlace"
-    Write-Host "  .\format-file.ps1 -help"
+    Write-Host "Usage from repository root:"
+    Write-Host "  .\formatter\format-file.ps1 .\input.sql"
+    Write-Host "  .\formatter\format-file.ps1 .\input.sql -OutFile .\output.sql"
+    Write-Host "  .\formatter\format-file.ps1 .\input.sql -InPlace"
+    Write-Host "  .\formatter\format-file.ps1 -help"
     Write-Host ""
     Write-Host "Preferences:"
     Write-Host "  Formatter preferences are read from:"
     Write-Host ""
-    Write-Host "      settings/settings.json"
+    Write-Host "      formatter/settings/settings.json"
     Write-Host ""
     Write-Host "  If the file does not exist, default preferences are used."
     Write-Host ""
@@ -46,8 +46,8 @@ function Show-Help {
     Write-Host '        "preserveCommentLineBoundaries": true'
     Write-Host '      }'
     Write-Host ""
-    Write-Host "  Copy settings/settings.example.json to settings/settings.json and edit it."
-    Write-Host "  settings/settings.json is local/user-specific and should not normally be committed."
+    Write-Host "  Copy formatter/settings/settings.example.json to formatter/settings/settings.json and edit it."
+    Write-Host "  formatter/settings/settings.json is local/user-specific and should not normally be committed."
     Write-Host ""
 }
 
