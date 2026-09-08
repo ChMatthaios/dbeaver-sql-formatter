@@ -12,7 +12,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        WidthBox.Text = FormatterSettings.ReadMaxLineLength().ToString();
+        LoadSettingsIntoUi();
         StatusText.Text = _formatter.IsAvailable
             ? "Ready"
             : "Formatter scripts were not found next to the app.";
@@ -33,7 +33,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!TryApplyWidth())
+        if (!TryApplySettings(out _))
         {
             return;
         }
@@ -72,13 +72,31 @@ public partial class MainWindow : Window
         }
     }
 
-    private bool TryApplyWidth()
+    private void LoadSettingsIntoUi()
     {
+        var settings = FormatterSettings.Read();
+        WidthBox.Text = settings.MaxLineLength.ToString();
+
+        Indent2Radio.IsChecked = settings.IndentSize == 2;
+        Indent4Radio.IsChecked = settings.IndentSize == 4;
+
+        UppercaseRadio.IsChecked = settings.KeywordCasing == "Uppercase";
+        LowercaseRadio.IsChecked = settings.KeywordCasing == "Lowercase";
+        PreserveCaseRadio.IsChecked = settings.KeywordCasing == "Preserve";
+
+        PreserveCommentsCheckBox.IsChecked = settings.PreserveCommentLineBoundaries;
+        UpdateSettingsSummary(settings);
+    }
+
+    private bool TryApplySettings(out FormatterPreferences preferences)
+    {
+        preferences = FormatterPreferences.Defaults;
+
         if (!int.TryParse(WidthBox.Text.Trim(), out var width) || width < 60 || width > 400)
         {
             MessageBox.Show(
                 this,
-                "Max width must be a whole number from 60 to 400.",
+                "Max line width must be a whole number from 60 to 400.",
                 "SQL Formatter",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
@@ -87,8 +105,78 @@ public partial class MainWindow : Window
             return false;
         }
 
-        FormatterSettings.WriteMaxLineLength(width);
-        return true;
+        var indentSize = Indent4Radio.IsChecked == true ? 4 : 2;
+        var keywordCasing = LowercaseRadio.IsChecked == true
+            ? "Lowercase"
+            : PreserveCaseRadio.IsChecked == true
+                ? "Preserve"
+                : "Uppercase";
+
+        preferences = new FormatterPreferences(
+            MaxLineLength: width,
+            IndentSize: indentSize,
+            KeywordCasing: keywordCasing,
+            PreserveCommentLineBoundaries: PreserveCommentsCheckBox.IsChecked == true);
+
+        try
+        {
+            FormatterSettings.Write(preferences);
+            UpdateSettingsSummary(preferences);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                this,
+                $"Could not save formatter settings.\n\n{ex.Message}",
+                "SQL Formatter",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            return false;
+        }
+    }
+
+    private void UpdateSettingsSummary(FormatterPreferences settings)
+    {
+        var casing = settings.KeywordCasing switch
+        {
+            "Lowercase" => "lowercase keywords",
+            "Preserve" => "preserve keyword case",
+            _ => "UPPERCASE keywords"
+        };
+        var comments = settings.PreserveCommentLineBoundaries
+            ? "preserve comment lines"
+            : "free comment reflow";
+
+        SettingsSummaryText.Text =
+            $"{settings.MaxLineLength} columns • {settings.IndentSize}-space indent\n{casing} • {comments}";
+    }
+
+    private void ApplySettings_Click(object sender, RoutedEventArgs e)
+    {
+        if (TryApplySettings(out _))
+        {
+            StatusText.Text = "Formatter settings saved.";
+        }
+    }
+
+    private void ResetSettings_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            FormatterSettings.ResetToDefaults();
+            LoadSettingsIntoUi();
+            StatusText.Text = "Formatter settings reset to defaults.";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                this,
+                $"Could not reset formatter settings.\n\n{ex.Message}",
+                "SQL Formatter",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
     }
 
     private void Open_Click(object sender, RoutedEventArgs e)
