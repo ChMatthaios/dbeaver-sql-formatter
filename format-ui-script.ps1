@@ -12,6 +12,8 @@
 
 $ErrorActionPreference = 'Stop'
 $UnitFormatter = Join-Path $PSScriptRoot 'format-ui.ps1'
+$DgttFormatter = Join-Path $PSScriptRoot 'format-dgtt-ui.ps1'
+$CaseArithmetic = Join-Path $PSScriptRoot 'format-case-arithmetic.ps1'
 $CaseBranchRepair = Join-Path $PSScriptRoot 'format-case-branches.ps1'
 $CaseConditionDetail = Join-Path $PSScriptRoot 'format-case-condition-detail.ps1'
 
@@ -123,10 +125,28 @@ function Format-OneUnit {
     param([string]$Sql)
 
     $cleanUnit = $Sql.Trim()
+    $formatter = $UnitFormatter
+
+    # DB2 DGTT AS (...) contains a complete child query. Format that child with
+    # its own width budget and then place it back under the parent declaration.
+    if (Test-Path $DgttFormatter -and
+        $cleanUnit -match '(?is)\bDECLARE\s+GLOBAL\s+TEMPORARY\s+TABLE\b.*?\bAS\s*\(') {
+        $formatter = $DgttFormatter
+    }
+
     $formatted = $cleanUnit |
-        powershell -NoProfile -ExecutionPolicy Bypass -File $UnitFormatter |
+        powershell -NoProfile -ExecutionPolicy Bypass -File $formatter |
         Out-String
     $formatted = $formatted.TrimEnd("`r", "`n")
+
+    # Sibling CASE expressions joined by arithmetic operators must stay siblings.
+    # Normalize those chains before the generic CASE branch presentation runs.
+    if (Test-Path $CaseArithmetic) {
+        $formatted = $formatted |
+            powershell -NoProfile -ExecutionPolicy Bypass -File $CaseArithmetic |
+            Out-String
+        $formatted = $formatted.TrimEnd("`r", "`n")
+    }
 
     # Long searched CASE expressions can leave later WHEN branches attached to
     # the preceding THEN result. Repair those branch boundaries only when the
