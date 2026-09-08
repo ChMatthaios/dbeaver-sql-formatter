@@ -2,10 +2,10 @@
     Final CASE-condition presentation pass for the Windows UI.
 
     Multiline CASE expressions can still contain complete nested queries or
-    compound predicates on a single WHEN line after the generic beautifier.
+    compound predicates on a WHEN line after the generic beautifier.
     This pass keeps the normal dialect formatter as the source of truth:
-      - an inline EXISTS (SELECT ...) is formatted as its own query and then
-        placed back under the WHEN prefix;
+      - EXISTS (SELECT ...) is formatted as its own query and then placed back
+        under the WHEN prefix, whether it arrived inline or already multiline;
       - top-level AND / OR predicates in a WHEN condition honor the configured
         boolean-operator position without splitting BETWEEN ... AND ... .
 #>
@@ -85,8 +85,10 @@ function Expand-InlineExists {
     param([string[]]$Lines)
 
     $out = New-Object System.Collections.Generic.List[string]
+    $i = 0
 
-    foreach ($line in $Lines) {
+    while ($i -lt $Lines.Count) {
+        $line = $Lines[$i]
         $m = [regex]::Match(
             $line,
             '^(?<indent>\s*)WHEN\s+EXISTS\s*\(',
@@ -95,24 +97,39 @@ function Expand-InlineExists {
 
         if (-not $m.Success) {
             $out.Add($line)
+            $i++
             continue
         }
 
-        $open = $line.IndexOf('(', $m.Index)
-        if ($open -lt 0) {
+        $openInFirstLine = $line.IndexOf('(', $m.Index)
+        if ($openInFirstLine -lt 0) {
             $out.Add($line)
+            $i++
             continue
         }
 
-        $close = Find-MatchingParen -Text $line -OpenIndex $open
-        if ($close -lt 0 -or $line.Substring($close + 1).Trim().Length -gt 0) {
+        # The prior CASE pass may already have placed the SELECT and closing ) on
+        # following lines. Gather the complete EXISTS parenthesized expression.
+        $block = $line
+        $close = Find-MatchingParen -Text $block -OpenIndex $openInFirstLine
+        $j = $i + 1
+        while ($close -lt 0 -and $j -lt $Lines.Count) {
+            $block += [Environment]::NewLine + $Lines[$j]
+            $close = Find-MatchingParen -Text $block -OpenIndex $openInFirstLine
+            $j++
+        }
+
+        if ($close -lt 0) {
             $out.Add($line)
+            $i++
             continue
         }
 
-        $inner = $line.Substring($open + 1, $close - $open - 1).Trim()
+        $inner = $block.Substring($openInFirstLine + 1, $close - $openInFirstLine - 1).Trim()
+        $tail = $block.Substring($close + 1).Trim()
         if ($inner -notmatch '^(?i)(SELECT|WITH)\b') {
-            $out.Add($line)
+            for ($k = $i; $k -lt $j; $k++) { $out.Add($Lines[$k]) }
+            $i = $j
             continue
         }
 
@@ -122,20 +139,37 @@ function Expand-InlineExists {
         $nested = $nested.TrimEnd("`r", "`n")
         $nestedLines = @($nested -split "`r?`n")
 
-        if ($nestedLines.Count -le 1) {
-            $out.Add($line)
-            continue
+        # A nested SELECT is a query unit, not just text belonging to WHEN.
+        # If the shared formatter kept this very small query on one line, make
+        # the major SELECT clauses explicit before placement so the parent CASE
+        # cannot collapse it back into the condition line.
+        if ($nestedLines.Count -eq 1) {
+            $fallback = $nestedLines[0].Trim()
+            $fallback = [regex]::Replace($fallback, '\s+(FROM)\s+', [Environment]::NewLine + '  FROM ', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            $fallback = [regex]::Replace($fallback, '\s+(WHERE)\s+', [Environment]::NewLine + ' WHERE ', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            $fallback = [regex]::Replace($fallback, '\s+(AND)\s+', [Environment]::NewLine + '   AND ', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            $nestedLines = @($fallback -split "`r?`n")
         }
 
         $prefix = $m.Groups['indent'].Value + 'WHEN EXISTS ('
         $out.Add($prefix + $nestedLines[0].TrimStart())
 
         $placement = ' ' * $prefix.Length
-        for ($i = 1; $i -lt $nestedLines.Count; $i++) {
-            $placed = $placement + $nestedLines[$i]
-            if ($i -eq $nestedLines.Count - 1) { $placed += ')' }
+        for ($n = 1; $n -lt $nestedLines.Count; $n++) {
+            $placed = $placement + $nestedLines[$n]
+            if ($n -eq $nestedLines.Count - 1) {
+                $placed += ')'
+                if ($tail) { $placed += ' ' + $tail }
+            }
             $out.Add($placed)
         }
+
+        if ($nestedLines.Count -eq 1) {
+            $out[$out.Count - 1] += ')'
+            if ($tail) { $out[$out.Count - 1] += ' ' + $tail }
+        }
+
+        $i = $j
     }
 
     return $out.ToArray()
@@ -251,16 +285,16 @@ function Expand-CaseBooleanConditions {
         $indent = $m.Groups['indent'].Value
         if ($booleanMode -eq 'Leading') {
             $out.Add($indent + 'WHEN ' + $parts[0].Text)
-            for ($i = 1; $i -lt $parts.Count; $i++) {
-                $out.Add($indent + ' ' + $parts[$i].Operator + ' ' + $parts[$i].Text)
+            for ($n = 1; $n -lt $parts.Count; $n++) {
+                $out.Add($indent + ' ' + $parts[$n].Operator + ' ' + $parts[$n].Text)
             }
         }
         else {
-            for ($i = 0; $i -lt $parts.Count; $i++) {
-                if ($i -eq 0) { $text = $indent + 'WHEN ' + $parts[$i].Text }
-                else { $text = $indent + (' ' * 5) + $parts[$i].Text }
+            for ($n = 0; $n -lt $parts.Count; $n++) {
+                if ($n -eq 0) { $text = $indent + 'WHEN ' + $parts[$n].Text }
+                else { $text = $indent + (' ' * 5) + $parts[$n].Text }
 
-                if ($i + 1 -lt $parts.Count) { $text += ' ' + $parts[$i + 1].Operator }
+                if ($n + 1 -lt $parts.Count) { $text += ' ' + $parts[$n + 1].Operator }
                 $out.Add($text)
             }
         }
