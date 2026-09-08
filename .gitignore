@@ -6,6 +6,12 @@
 # VSCode / IDE
 .vscode/
 .idea/
+.vs/
+
+# .NET / WPF build output
+**/bin/
+**/obj/
+artifacts/
 
 # OS files
 .DS_Store
