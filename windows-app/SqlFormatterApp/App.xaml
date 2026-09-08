@@ -24,5 +24,93 @@
     <SolidColorBrush x:Key="AccentTextBrush" Color="#F8FAFC" />
     <SolidColorBrush x:Key="SelectionBrush" Color="#4C627E" />
     <SolidColorBrush x:Key="DisabledTextBrush" Color="#7F8996" />
+
+    <!--
+      A fully-owned ComboBox template. The stock Windows template can ignore
+      WPF Foreground resources for the closed selection box, which caused white
+      text on a white native background in dark mode. This template keeps the
+      selected value, popup items and arrow under the app's theme brushes.
+    -->
+    <ControlTemplate x:Key="ThemedComboBoxTemplate" TargetType="{x:Type ComboBox}">
+      <Grid SnapsToDevicePixels="True">
+        <ToggleButton x:Name="ToggleButton"
+                      Focusable="False"
+                      ClickMode="Press"
+                      IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}"
+                      Background="{TemplateBinding Background}"
+                      BorderBrush="{TemplateBinding BorderBrush}"
+                      BorderThickness="{TemplateBinding BorderThickness}">
+          <ToggleButton.Template>
+            <ControlTemplate TargetType="{x:Type ToggleButton}">
+              <Border x:Name="OuterBorder"
+                      Background="{TemplateBinding Background}"
+                      BorderBrush="{TemplateBinding BorderBrush}"
+                      BorderThickness="{TemplateBinding BorderThickness}"
+                      CornerRadius="3">
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="30" />
+                  </Grid.ColumnDefinitions>
+                  <Border Grid.Column="1"
+                          BorderBrush="{DynamicResource BorderBrush}"
+                          BorderThickness="1,0,0,0" />
+                  <Path Grid.Column="1"
+                        Width="9"
+                        Height="5"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Fill="{DynamicResource TextSecondaryBrush}"
+                        Data="M 0 0 L 4.5 5 L 9 0 Z" />
+                </Grid>
+              </Border>
+              <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                  <Setter TargetName="OuterBorder" Property="Background" Value="{DynamicResource ControlHoverBrush}" />
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </ToggleButton.Template>
+        </ToggleButton>
+
+        <ContentPresenter x:Name="ContentSite"
+                          Margin="9,0,34,0"
+                          VerticalAlignment="Center"
+                          HorizontalAlignment="Left"
+                          IsHitTestVisible="False"
+                          RecognizesAccessKey="True"
+                          Content="{TemplateBinding SelectionBoxItem}"
+                          ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                          ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                          TextElement.Foreground="{DynamicResource TextPrimaryBrush}" />
+
+        <Popup x:Name="PART_Popup"
+               Placement="Bottom"
+               AllowsTransparency="True"
+               Focusable="False"
+               IsOpen="{TemplateBinding IsDropDownOpen}"
+               PopupAnimation="Fade">
+          <Border MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
+                  MaxHeight="{TemplateBinding MaxDropDownHeight}"
+                  Margin="0,2,0,0"
+                  Padding="1"
+                  Background="{DynamicResource ControlBrush}"
+                  BorderBrush="{DynamicResource BorderBrush}"
+                  BorderThickness="1"
+                  CornerRadius="3">
+            <ScrollViewer CanContentScroll="True"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+              <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained" />
+            </ScrollViewer>
+          </Border>
+        </Popup>
+      </Grid>
+      <ControlTemplate.Triggers>
+        <Trigger Property="IsEnabled" Value="False">
+          <Setter TargetName="ContentSite" Property="TextElement.Foreground" Value="{DynamicResource DisabledTextBrush}" />
+        </Trigger>
+      </ControlTemplate.Triggers>
+    </ControlTemplate>
   </Application.Resources>
 </Application>
