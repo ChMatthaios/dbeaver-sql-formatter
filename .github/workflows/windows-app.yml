@@ -56,6 +56,70 @@ jobs:
             throw 'Windows UI structural formatting regression failed.'
           }
 
+      - name: Test advanced beautifier settings
+        shell: pwsh
+        run: |
+          $settings = @{
+            maxLineLength = 80
+            indentSize = 2
+            keywordCasing = 'Uppercase'
+            preserveCommentLineBoundaries = $true
+            advanced = @{
+              enabled = $true
+              parentheses = @{
+                functionSpaceBeforeParen = 'Preserve'
+                insideParentheses = 'Preserve'
+                subqueryOpening = 'Preserve'
+                subqueryClosing = 'Preserve'
+                cteAsParenthesis = 'Preserve'
+              }
+              lists = @{
+                select = 'OnePerLine'
+                groupBy = 'OnePerLine'
+                orderBy = 'OnePerLine'
+                updateSet = 'Preserve'
+                insertColumns = 'Preserve'
+                values = 'Preserve'
+                inList = 'OnePerLine'
+                functionArguments = 'Preserve'
+                commaStyle = 'Leading'
+                continuationIndent = 'Align'
+              }
+              clauses = @{
+                alignment = 'Left'
+                booleanOperatorPosition = 'Trailing'
+                joinLayout = 'Preserve'
+                onClause = 'Preserve'
+                cteLayout = 'Preserve'
+                blankLineBetweenCtes = $false
+              }
+              case = @{
+                style = 'Preserve'
+                thenResult = 'Preserve'
+                elseResult = 'Preserve'
+              }
+              spacing = @{
+                comparisonOperators = 'Spaced'
+                afterComma = 'Space'
+              }
+            }
+          }
+          $settings | ConvertTo-Json -Depth 10 | Set-Content .\settings\settings.json
+
+          $inputSql = Get-Content .\windows-app\test-data\beautifier-canonical.sql -Raw
+          $actual = $inputSql |
+            powershell -NoProfile -ExecutionPolicy Bypass -File .\format-beautifier.ps1 |
+            Out-String
+          $actual = $actual.TrimEnd("`r", "`n")
+          $expected = (Get-Content .\windows-app\test-data\beautifier-canonical.expected.sql -Raw).TrimEnd("`r", "`n")
+          if ($actual -ne $expected) {
+            Write-Host '--- EXPECTED ---'
+            Write-Host $expected
+            Write-Host '--- ACTUAL ---'
+            Write-Host $actual
+            throw 'Advanced beautifier regression failed.'
+          }
+
       - name: Publish portable Windows app
         run: dotnet publish .\windows-app\SqlFormatterApp\SqlFormatterApp.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o .\artifacts\SqlFormatterApp
 
@@ -67,6 +131,7 @@ jobs:
           if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-ui.ps1)) { throw 'format-ui.ps1 was not bundled.' }
           if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-semantic-polish.ps1)) { throw 'semantic polish formatter was not bundled.' }
           if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-ui-finalize.ps1)) { throw 'UI finalizer was not bundled.' }
+          if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-beautifier.ps1)) { throw 'Advanced beautifier was not bundled.' }
           if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-sparql.ps1)) { throw 'SPARQL formatter was not bundled.' }
 
       - uses: actions/upload-artifact@v4
