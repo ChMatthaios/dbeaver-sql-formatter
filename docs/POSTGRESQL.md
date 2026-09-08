@@ -3,10 +3,10 @@
 The same DBeaver external formatter command is used for DB2 and PostgreSQL:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Path\To\dbeaver-sql-formatter\format-sql.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Path\To\dbeaver-sql-formatter\formatter\format-dbeaver.ps1"
 ```
 
-`format-sql.ps1` automatically routes strong PostgreSQL syntax signals to `format-postgresql.ps1`; ordinary ANSI SQL continues through the shared core formatter.
+`formatter/format-dbeaver.ps1` delegates to the same full presentation pipeline used by the Windows UI. Dialect detection underneath automatically routes strong PostgreSQL syntax signals to `formatter/format-postgresql.ps1`; ordinary ANSI SQL continues through the shared core formatter.
 
 ## Covered in the first PostgreSQL release
 
@@ -27,10 +27,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Path\To\dbeaver-sql-form
 
 ## PL/pgSQL safety
 
-Dollar-quoted function/procedure bodies (`$$...$$` and `$tag$...$tag$`) are protected before any whitespace or keyword processing. In this first PostgreSQL release, the body itself is preserved rather than aggressively reformatted. This prevents the formatter from damaging embedded PL/pgSQL statements, strings, comments, or internal semicolons.
+Dollar-quoted function/procedure bodies (`$$...$$` and `$tag$...$tag$`) are protected before any whitespace or keyword processing. The body itself is preserved rather than aggressively reformatted, preventing damage to embedded PL/pgSQL statements, strings, comments, or internal semicolons.
 
 ## DBeaver
 
-No second formatter configuration is required. Configure DBeaver once to call `format-sql.ps1`; the same `Ctrl + Shift + F` command can then be used in DB2 and PostgreSQL editors.
+No second formatter configuration is required. Configure DBeaver once to call `formatter/format-dbeaver.ps1`; the same `Ctrl + Shift + F` command can then be used in DB2 and PostgreSQL editors.
 
 For best results, select one complete SQL statement before formatting, especially for functions/procedures and large scripts.
