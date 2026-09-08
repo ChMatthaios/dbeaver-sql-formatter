@@ -32,6 +32,291 @@ jobs:
       - name: Build
         run: dotnet build .\windows-app\SqlFormatterApp\SqlFormatterApp.csproj -c Release --no-restore
 
+      - name: Test structural UI formatting
+        shell: pwsh
+        run: |
+          @{
+            maxLineLength = 80
+            indentSize = 2
+            keywordCasing = 'Uppercase'
+            preserveCommentLineBoundaries = $true
+          } | ConvertTo-Json | Set-Content .\settings\settings.json
+
+          $inputSql = Get-Content .\windows-app\test-data\structured-complex-db2.sql -Raw
+          $actual = $inputSql |
+            powershell -NoProfile -ExecutionPolicy Bypass -File .\format-ui.ps1 |
+            Out-String
+          $actual = $actual.TrimEnd("`r", "`n")
+          $expected = (Get-Content .\windows-app\test-data\structured-complex-db2.expected.sql -Raw).TrimEnd("`r", "`n")
+          if ($actual -ne $expected) {
+            Write-Host '--- EXPECTED ---'
+            Write-Host $expected
+            Write-Host '--- ACTUAL ---'
+            Write-Host $actual
+            throw 'Windows UI structural formatting regression failed.'
+          }
+
+      - name: Test advanced beautifier settings
+        shell: pwsh
+        run: |
+          $settings = @{
+            maxLineLength = 80
+            indentSize = 2
+            keywordCasing = 'Uppercase'
+            preserveCommentLineBoundaries = $true
+            advanced = @{
+              enabled = $true
+              parentheses = @{
+                functionSpaceBeforeParen = 'Preserve'
+                insideParentheses = 'Preserve'
+                subqueryOpening = 'Preserve'
+                subqueryClosing = 'Preserve'
+                cteAsParenthesis = 'Preserve'
+              }
+              lists = @{
+                select = 'OnePerLine'
+                groupBy = 'OnePerLine'
+                orderBy = 'OnePerLine'
+                updateSet = 'Preserve'
+                insertColumns = 'Preserve'
+                values = 'Preserve'
+                inList = 'OnePerLine'
+                functionArguments = 'Preserve'
+                commaStyle = 'Leading'
+                continuationIndent = 'Align'
+              }
+              clauses = @{
+                alignment = 'Left'
+                booleanOperatorPosition = 'Trailing'
+                joinLayout = 'Preserve'
+                onClause = 'Preserve'
+                cteLayout = 'Preserve'
+                blankLineBetweenCtes = $false
+              }
+              case = @{
+                style = 'Preserve'
+                thenResult = 'Preserve'
+                elseResult = 'Preserve'
+              }
+              spacing = @{
+                comparisonOperators = 'Spaced'
+                afterComma = 'Space'
+              }
+            }
+          }
+          $settings | ConvertTo-Json -Depth 10 | Set-Content .\settings\settings.json
+
+          $inputSql = Get-Content .\windows-app\test-data\beautifier-canonical.sql -Raw
+          $actual = $inputSql |
+            powershell -NoProfile -ExecutionPolicy Bypass -File .\format-beautifier.ps1 |
+            Out-String
+          $actual = $actual.TrimEnd("`r", "`n")
+          $expected = (Get-Content .\windows-app\test-data\beautifier-canonical.expected.sql -Raw).TrimEnd("`r", "`n")
+          if ($actual -ne $expected) {
+            Write-Host '--- EXPECTED ---'
+            Write-Host $expected
+            Write-Host '--- ACTUAL ---'
+            Write-Host $actual
+            throw 'Advanced beautifier regression failed.'
+          }
+
+      - name: Test MERGE nested CTE presentation
+        shell: pwsh
+        run: |
+          $settings = @{
+            maxLineLength = 80
+            indentSize = 2
+            keywordCasing = 'Uppercase'
+            preserveCommentLineBoundaries = $true
+            advanced = @{
+              enabled = $true
+              parentheses = @{
+                functionSpaceBeforeParen = 'NoSpace'
+                insideParentheses = 'NoSpace'
+                subqueryOpening = 'NewLine'
+                subqueryClosing = 'NewLine'
+                cteAsParenthesis = 'SameLine'
+              }
+              lists = @{
+                select = 'OnePerLine'
+                groupBy = 'OnePerLine'
+                orderBy = 'OnePerLine'
+                updateSet = 'OnePerLine'
+                insertColumns = 'OnePerLine'
+                values = 'Wrap'
+                inList = 'Wrap'
+                functionArguments = 'Wrap'
+                commaStyle = 'Trailing'
+                continuationIndent = 'Indent'
+              }
+              clauses = @{
+                alignment = 'Left'
+                booleanOperatorPosition = 'Leading'
+                joinLayout = 'EachNewLine'
+                onClause = 'NewLine'
+                cteLayout = 'CompactHeader'
+                blankLineBetweenCtes = $true
+              }
+              case = @{
+                style = 'Multiline'
+                thenResult = 'SameLine'
+                elseResult = 'SameLine'
+              }
+              spacing = @{
+                comparisonOperators = 'Spaced'
+                afterComma = 'Space'
+              }
+            }
+          }
+          $settings | ConvertTo-Json -Depth 10 | Set-Content .\settings\settings.json
+
+          $inputSql = Get-Content .\windows-app\test-data\merge-nested-cte.sql -Raw
+          $ui = $inputSql |
+            powershell -NoProfile -ExecutionPolicy Bypass -File .\format-ui.ps1 |
+            Out-String
+          $ui = $ui.TrimEnd("`r", "`n")
+
+          if ($ui -notmatch '(?m)^\s+WITH\s+BASE_ORDERS\s+AS\s*\(') {
+            Write-Host $ui
+            throw 'MERGE USING query did not apply compact CTE formatting to BASE_ORDERS.'
+          }
+          if ($ui -notmatch '(?m)^\s+CUSTOMER_AGG\s+AS\s*\(') {
+            Write-Host $ui
+            throw 'MERGE USING query did not format CUSTOMER_AGG as a complete CTE header.'
+          }
+          if ($ui -match '(?m)^\s*CUSTOMER_AGG\s*$') {
+            Write-Host $ui
+            throw 'CUSTOMER_AGG was left as a detached CTE-name line.'
+          }
+          if ($ui -notmatch '(?m)^\s*WHEN MATCHED\b') {
+            Write-Host $ui
+            throw 'MERGE outer WHEN MATCHED action was damaged.'
+          }
+
+          $badIndent = @($ui -split "`r?`n" | Where-Object {
+            $leading = $_.Length - $_.TrimStart().Length
+            $leading -gt 60
+          })
+          if ($badIndent.Count -gt 0) {
+            Write-Host '--- EXCESSIVE INDENTATION ---'
+            $badIndent | ForEach-Object { Write-Host $_ }
+            throw 'MERGE formatting contains runaway indentation.'
+          }
+
+      - name: Test multi-statement UPDATE and DELETE presentation
+        shell: pwsh
+        run: |
+          $settings = @{
+            maxLineLength = 120
+            indentSize = 2
+            keywordCasing = 'Uppercase'
+            preserveCommentLineBoundaries = $true
+            advanced = @{
+              enabled = $true
+              parentheses = @{
+                functionSpaceBeforeParen = 'NoSpace'
+                insideParentheses = 'NoSpace'
+                subqueryOpening = 'NewLine'
+                subqueryClosing = 'NewLine'
+                cteAsParenthesis = 'SameLine'
+              }
+              lists = @{
+                select = 'OnePerLine'
+                groupBy = 'OnePerLine'
+                orderBy = 'OnePerLine'
+                updateSet = 'OnePerLine'
+                insertColumns = 'OnePerLine'
+                values = 'Wrap'
+                inList = 'Wrap'
+                functionArguments = 'Wrap'
+                commaStyle = 'Trailing'
+                continuationIndent = 'Indent'
+              }
+              clauses = @{
+                alignment = 'Left'
+                booleanOperatorPosition = 'Leading'
+                joinLayout = 'EachNewLine'
+                onClause = 'NewLine'
+                cteLayout = 'CompactHeader'
+                blankLineBetweenCtes = $true
+              }
+              case = @{
+                style = 'Multiline'
+                thenResult = 'SameLine'
+                elseResult = 'SameLine'
+              }
+              spacing = @{
+                comparisonOperators = 'Spaced'
+                afterComma = 'Space'
+              }
+            }
+          }
+          $settings | ConvertTo-Json -Depth 10 | Set-Content .\settings\settings.json
+
+          $inputSql = Get-Content .\examples\sample-db2.sql -Raw
+          $ui = $inputSql |
+            powershell -NoProfile -ExecutionPolicy Bypass -File .\format-ui-script.ps1 |
+            Out-String
+          $ui = $ui.TrimEnd("`r", "`n")
+
+          $checks = @(
+            '(?m)^UPDATE REPORTING\.CUSTOMER_SUMMARY T\s*$',
+            '(?m)^\s+SET CUSTOMER_SEGMENT\b',
+            '(?m)^\s*WHERE T\.CUSTOMER_ID IN\b',
+            '(?m)^\s*INNER JOIN ORDER_HEADER O\b',
+            '(?m)^\s*LEFT JOIN CUSTOMER_ADDRESS A\b',
+            '(?m)^DELETE FROM CUSTOMER_STAGE S\s*$',
+            '(?m)^\s*WHERE S\.LOAD_BATCH_ID = 20260520\b',
+            '(?m)^\s*INNER JOIN LOAD_CONTROL LC\b',
+            '(?m)^\s*LEFT JOIN LOAD_ERROR E\b'
+          )
+          foreach ($pattern in $checks) {
+            if ($ui -notmatch $pattern) {
+              Write-Host $ui
+              throw "Multi-statement UPDATE/DELETE formatting check failed: $pattern"
+            }
+          }
+
+          if ($ui -match '(?m)^\s*(INNER|LEFT|RIGHT|FULL|CROSS)(?:\s+OUTER)?\s*$') {
+            Write-Host $ui
+            throw 'JOIN modifier was detached from JOIN.'
+          }
+          if ($ui -notmatch 'REVIEW_REQUIRED_FLG' -or
+              $ui -notmatch '(?m)^\s*AND NOT EXISTS\b' -or
+              $ui -notmatch '(?m)^\s*AND EXISTS\b') {
+            Write-Host $ui
+            throw 'UPDATE or DELETE semantic predicates were lost.'
+          }
+
+          $updateBlockMatch = [regex]::Match(
+            $ui,
+            '(?s)-- 03\. Extremely complicated UPDATE statement.*?(?=-- ={10,}\r?\n-- 04\.)'
+          )
+          if (-not $updateBlockMatch.Success) {
+            Write-Host $ui
+            throw 'Could not isolate UPDATE statement 03 for CASE regression checks.'
+          }
+          $updateBlock = $updateBlockMatch.Value
+
+          if ($updateBlock -match '(?im)\bTHEN\b[^\r\n]*\bWHEN\b') {
+            Write-Host $updateBlock
+            throw 'A later CASE WHEN branch was left attached to a previous THEN result.'
+          }
+
+          $segmentWhens = [regex]::Matches(
+            $updateBlock,
+            '(?im)^\s*WHEN\s+T\.TOTAL_AMOUNT\s*>=\s*(25000|10000|5000|1000)\b'
+          )
+          if ($segmentWhens.Count -ne 4) {
+            Write-Host $updateBlock
+            throw "CUSTOMER_SEGMENT CASE expected 4 independent WHEN branches, found $($segmentWhens.Count)."
+          }
+
+          if ($updateBlock -notmatch '(?im)^\s*WHEN\s+T\.TOTAL_AMOUNT\s*>=\s*50000\s+AND\s+T\.ORDER_COUNT\s*<=\s*2\b') {
+            Write-Host $updateBlock
+            throw 'REVIEW_REQUIRED_FLG second WHEN branch was not placed independently.'
+          }
+
       - name: Publish portable Windows app
         run: dotnet publish .\windows-app\SqlFormatterApp\SqlFormatterApp.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o .\artifacts\SqlFormatterApp
 
@@ -40,6 +325,12 @@ jobs:
         run: |
           if (-not (Test-Path .\artifacts\SqlFormatterApp\SqlFormatterApp.exe)) { throw 'SqlFormatterApp.exe was not published.' }
           if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-sql.ps1)) { throw 'format-sql.ps1 was not bundled.' }
+          if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-ui.ps1)) { throw 'format-ui.ps1 was not bundled.' }
+          if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-ui-script.ps1)) { throw 'format-ui-script.ps1 was not bundled.' }
+          if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-case-branches.ps1)) { throw 'CASE branch repair formatter was not bundled.' }
+          if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-semantic-polish.ps1)) { throw 'semantic polish formatter was not bundled.' }
+          if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-ui-finalize.ps1)) { throw 'UI finalizer was not bundled.' }
+          if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-beautifier.ps1)) { throw 'Advanced beautifier was not bundled.' }
           if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-sparql.ps1)) { throw 'SPARQL formatter was not bundled.' }
 
       - uses: actions/upload-artifact@v4

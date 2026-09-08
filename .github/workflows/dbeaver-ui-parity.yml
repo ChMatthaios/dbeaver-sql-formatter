@@ -1,0 +1,164 @@
+name: DBeaver UI parity
+
+on:
+  pull_request:
+    paths:
+      - 'format-dbeaver.ps1'
+      - 'format-ui-script.ps1'
+      - 'format-ui.ps1'
+      - 'format-sql.ps1'
+      - 'format-beautifier.ps1'
+      - 'format-*.ps1'
+      - 'settings/**'
+      - '.github/workflows/dbeaver-ui-parity.yml'
+  push:
+    branches: [ main ]
+    paths:
+      - 'format-dbeaver.ps1'
+      - 'format-ui-script.ps1'
+      - 'format-ui.ps1'
+      - 'format-sql.ps1'
+      - 'format-beautifier.ps1'
+      - 'format-*.ps1'
+      - 'settings/**'
+      - '.github/workflows/dbeaver-ui-parity.yml'
+
+jobs:
+  dbeaver-ui-parity:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify DBeaver exactly matches the Windows UI pipeline
+        shell: pwsh
+        run: |
+          $settings = @{
+            maxLineLength = 120
+            indentSize = 2
+            keywordCasing = 'Uppercase'
+            preserveCommentLineBoundaries = $true
+            advanced = @{
+              enabled = $true
+              parentheses = @{
+                functionSpaceBeforeParen = 'Preserve'
+                insideParentheses = 'Space'
+                subqueryOpening = 'Preserve'
+                subqueryClosing = 'Preserve'
+                cteAsParenthesis = 'Preserve'
+              }
+              lists = @{
+                select = 'OnePerLine'
+                groupBy = 'OnePerLine'
+                orderBy = 'Wrap'
+                updateSet = 'OnePerLine'
+                insertColumns = 'OnePerLine'
+                values = 'Wrap'
+                inList = 'Wrap'
+                functionArguments = 'Wrap'
+                commaStyle = 'Trailing'
+                continuationIndent = 'Align'
+              }
+              clauses = @{
+                alignment = 'IBM'
+                booleanOperatorPosition = 'Leading'
+                joinLayout = 'EachNewLine'
+                onClause = 'NewLine'
+                cteLayout = 'ExpandedHeader'
+                blankLineBetweenCtes = $false
+              }
+              case = @{
+                style = 'Multiline'
+                thenResult = 'NewLine'
+                elseResult = 'NewLine'
+              }
+              spacing = @{
+                comparisonOperators = 'Spaced'
+                afterComma = 'Space'
+              }
+            }
+          }
+          $settings | ConvertTo-Json -Depth 10 | Set-Content .\settings\settings.json
+
+          $cases = @(
+            @{
+              Name = 'DB2 common SQL'
+              Sql = "select cst_cid,grs_rev_mon from dw_corpt.prc_cst_m_msr where year=2026 and month in (7,8,9) order by cst_cid;"
+            },
+            @{
+              Name = 'DB2 DGTT + CTE'
+              Sql = "declare global temporary table session.t1 as (with c as (select 1 as id from sysibm.sysdummy1) select id from c) with data with replace on commit preserve rows;"
+            },
+            @{
+              Name = 'PostgreSQL'
+              Sql = "insert into customer (id,name,email) values (1,'Matt','m@example.com') on conflict (id) do update set name=excluded.name,email=excluded.email returning id,name;"
+            },
+            @{
+              Name = 'PostgreSQL dollar-quoted routine'
+              Sql = @'
+create or replace function test_fn(p_id integer)
+returns integer
+language plpgsql
+as $$
+begin
+  return p_id + 1;
+end;
+$$;
+'@
+            },
+            @{
+              Name = 'SQL Server / T-SQL'
+              Sql = "select top (10) [c].[id],isnull([c].[name],N'') as [name] from [dbo].[customer] [c] where [c].[active]=1 order by [c].[id];"
+            },
+            @{
+              Name = 'Oracle SQL'
+              Sql = "select customer_id,nvl(customer_name,'UNKNOWN') as customer_name from customer where rownum<=10 order by customer_id;"
+            },
+            @{
+              Name = 'Oracle PL/SQL'
+              Sql = @'
+create or replace procedure p_test(p_id in number) as
+begin
+  if p_id > 0 then
+    null;
+  end if;
+end;
+/
+'@
+            },
+            @{
+              Name = 'SPARQL'
+              Sql = @'
+PREFIX ex: <http://example.com/>
+SELECT ?s ?p ?o
+WHERE { ?s ?p ?o . FILTER(?s = ex:item) }
+LIMIT 10
+'@
+            },
+            @{
+              Name = 'Multi-statement common SQL'
+              Sql = "update t set a=1,b=2 where id=10; delete from t where id=11;"
+            }
+          )
+
+          foreach ($case in $cases) {
+            $ui = $case.Sql |
+              powershell -NoProfile -ExecutionPolicy Bypass -File .\format-ui-script.ps1 |
+              Out-String
+            $ui = $ui.TrimEnd("`r", "`n")
+
+            $dbeaver = $case.Sql |
+              powershell -NoProfile -ExecutionPolicy Bypass -File .\format-dbeaver.ps1 |
+              Out-String
+            $dbeaver = $dbeaver.TrimEnd("`r", "`n")
+
+            if ($dbeaver -cne $ui) {
+              Write-Host "=== $($case.Name): UI ==="
+              Write-Host $ui
+              Write-Host "=== $($case.Name): DBeaver ==="
+              Write-Host $dbeaver
+              throw "DBeaver output differs from the Windows UI for: $($case.Name)"
+            }
+
+            Write-Host "PASS: $($case.Name)"
+          }

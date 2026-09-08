@@ -2,5 +2,44 @@
   "maxLineLength": 120,
   "indentSize": 2,
   "keywordCasing": "Uppercase",
-  "preserveCommentLineBoundaries": true
+  "preserveCommentLineBoundaries": true,
+  "advanced": {
+    "enabled": true,
+    "parentheses": {
+      "functionSpaceBeforeParen": "Preserve",
+      "insideParentheses": "Preserve",
+      "subqueryOpening": "Preserve",
+      "subqueryClosing": "Preserve",
+      "cteAsParenthesis": "Preserve"
+    },
+    "lists": {
+      "select": "Preserve",
+      "groupBy": "Preserve",
+      "orderBy": "Preserve",
+      "updateSet": "Preserve",
+      "insertColumns": "Preserve",
+      "values": "Preserve",
+      "inList": "Preserve",
+      "functionArguments": "Preserve",
+      "commaStyle": "Preserve",
+      "continuationIndent": "Preserve"
+    },
+    "clauses": {
+      "alignment": "Preserve",
+      "booleanOperatorPosition": "Preserve",
+      "joinLayout": "Preserve",
+      "onClause": "Preserve",
+      "cteLayout": "Preserve",
+      "blankLineBetweenCtes": false
+    },
+    "case": {
+      "style": "Preserve",
+      "thenResult": "Preserve",
+      "elseResult": "Preserve"
+    },
+    "spacing": {
+      "comparisonOperators": "Preserve",
+      "afterComma": "Preserve"
+    }
+  }
 }

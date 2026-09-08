@@ -1,0 +1,118 @@
+WITH CUSTOMER_BASE
+  AS ( SELECT C.CUSTOMER_ID,
+              C.CUSTOMER_NAME,
+              C.COUNTRY_CODE,
+              C.CREATED_AT,
+              C.IS_ACTIVE,
+              COALESCE(NULLIF(TRIM(C.EMAIL_ADDRESS), ''),
+                       'NO_EMAIL') AS EMAIL_ADDRESS,
+              CASE
+                WHEN C.IS_ACTIVE = 1 AND C.CREATED_AT >= DATE('2024-01-01')
+                THEN 'NEW_ACTIVE'
+                WHEN C.IS_ACTIVE = 1 THEN 'ACTIVE'
+                ELSE 'INACTIVE'
+              END AS CUSTOMER_STATUS
+         FROM CUSTOMER C
+        WHERE C.COUNTRY_CODE IN ('GR', 'US',
+                                 'GB', 'DE')
+          AND EXISTS (SELECT 1
+                        FROM ORDER_HEADER OH
+                       WHERE OH.CUSTOMER_ID = C.CUSTOMER_ID
+                         AND OH.STATUS_CODE IN ('PAID',
+                                                'SHIPPED',
+                                                'CLOSED')) ),
+     ORDER_ENRICH
+  AS ( SELECT O.CUSTOMER_ID,
+              O.ORDER_ID,
+              O.ORDER_DATE,
+              O.STATUS_CODE,
+              O.TOTAL_AMOUNT,
+              O.CURRENCY_CODE,
+              ROW_NUMBER()
+                   OVER (PARTITION BY O.CUSTOMER_ID
+                             ORDER BY O.ORDER_DATE DESC,
+                                      O.ORDER_ID DESC) AS LAST_ORDER_RN,
+              SUM (O.TOTAL_AMOUNT)
+                OVER (PARTITION BY O.CUSTOMER_ID
+                          ORDER BY O.ORDER_DATE
+                           ROWS BETWEEN UNBOUNDED PRECEDING
+                                    AND CURRENT ROW) AS RUNNING_TOTAL,
+              CASE
+                WHEN O.TOTAL_AMOUNT >= 10000 THEN 'VERY_HIGH'
+                WHEN O.TOTAL_AMOUNT >= 5000 THEN 'HIGH'
+                WHEN O.TOTAL_AMOUNT >= 1000 THEN 'MEDIUM'
+                ELSE 'LOW'
+              END AS ORDER_VALUE_BAND
+         FROM ORDER_HEADER O
+        WHERE O.ORDER_DATE BETWEEN DATE('2024-01-01')
+                               AND DATE('2024-12-31')
+          AND O.STATUS_CODE IN ('PAID', 'SHIPPED', 'CLOSED') ),
+     CUSTOMER_TOTALS
+  AS ( SELECT OE.CUSTOMER_ID,
+              COUNT(*) AS ORDER_COUNT,
+              SUM(OE.TOTAL_AMOUNT) AS TOTAL_AMOUNT,
+              AVG(OE.TOTAL_AMOUNT) AS AVG_AMOUNT,
+              MAX(OE.ORDER_DATE) AS LAST_ORDER_DATE,
+              SUM(CASE
+                    WHEN OE.ORDER_VALUE_BAND IN ('VERY_HIGH', 'HIGH')
+                    THEN 1
+                    ELSE 0
+                  END) AS HIGH_VALUE_ORDER_COUNT
+         FROM ORDER_ENRICH OE
+        GROUP BY OE.CUSTOMER_ID
+        HAVING SUM(OE.TOTAL_AMOUNT) >= 1000 )
+SELECT CB.CUSTOMER_ID,
+       CB.CUSTOMER_NAME,
+       CB.EMAIL_ADDRESS,
+       CB.COUNTRY_CODE,
+       CB.CUSTOMER_STATUS,
+       CT.ORDER_COUNT,
+       CT.TOTAL_AMOUNT,
+       CT.AVG_AMOUNT,
+       CT.LAST_ORDER_DATE,
+       CT.HIGH_VALUE_ORDER_COUNT,
+       LO.ORDER_ID AS LAST_ORDER_ID,
+       LO.STATUS_CODE AS LAST_ORDER_STATUS,
+       CASE
+         WHEN CT.TOTAL_AMOUNT >= 25000 AND CT.HIGH_VALUE_ORDER_COUNT >= 3
+         THEN 'PLATINUM'
+         WHEN CT.TOTAL_AMOUNT >= 10000 THEN 'VIP'
+         WHEN CT.TOTAL_AMOUNT >= 5000 THEN 'GOLD'
+         WHEN CT.TOTAL_AMOUNT >= 1000 THEN 'SILVER'
+         ELSE 'STANDARD'
+       END AS CUSTOMER_SEGMENT,
+       (SELECT COUNT(*)
+          FROM CUSTOMER_NOTE CN
+         WHERE CN.CUSTOMER_ID = CB.CUSTOMER_ID
+           AND CN.IS_ACTIVE = 1) AS ACTIVE_NOTE_COUNT
+  FROM CUSTOMER_BASE CB
+  INNER JOIN CUSTOMER_TOTALS CT ON CT.CUSTOMER_ID = CB.CUSTOMER_ID
+  LEFT JOIN ORDER_ENRICH LO
+    ON LO.CUSTOMER_ID = CB.CUSTOMER_ID
+   AND LO.LAST_ORDER_RN = 1
+  LEFT JOIN CUSTOMER_ADDRESS CA
+    ON CA.CUSTOMER_ID = CB.CUSTOMER_ID
+   AND CA.IS_PRIMARY = 1
+   AND CA.VALID_FROM <= CURRENT DATE
+   AND (CA.VALID_TO IS NULL OR CA.VALID_TO >= CURRENT DATE)
+ WHERE CB.IS_ACTIVE = 1
+   AND NOT EXISTS (SELECT 1
+                     FROM CUSTOMER_BLACKLIST BL
+                    WHERE BL.CUSTOMER_ID = CB.CUSTOMER_ID
+                      AND BL.IS_ACTIVE = 1)
+   AND (CT.TOTAL_AMOUNT >= 5000 OR CB.COUNTRY_CODE = 'GR')
+ GROUP BY CB.CUSTOMER_ID,
+          CB.CUSTOMER_NAME,
+          CB.EMAIL_ADDRESS,
+          CB.COUNTRY_CODE,
+          CB.CUSTOMER_STATUS,
+          CT.ORDER_COUNT,
+          CT.TOTAL_AMOUNT,
+          CT.AVG_AMOUNT,
+          CT.LAST_ORDER_DATE,
+          CT.HIGH_VALUE_ORDER_COUNT,
+          LO.ORDER_ID,
+          LO.STATUS_CODE
+ ORDER BY CT.TOTAL_AMOUNT DESC, CB.CUSTOMER_NAME ASC, CB.CUSTOMER_ID ASC
+ FETCH FIRST 500 ROWS ONLY
+  WITH UR;

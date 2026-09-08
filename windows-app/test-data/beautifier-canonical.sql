@@ -1,0 +1,6 @@
+SELECT A, B, C, D
+  FROM T
+ WHERE X IN (1, 2, 3, 4)
+   AND Y = 1
+ GROUP BY A, B, C
+ ORDER BY A, B, C;

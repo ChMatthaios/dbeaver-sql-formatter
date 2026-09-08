@@ -1,6 +1,6 @@
 # Windows app
 
-`SqlFormatterApp` is a small WPF desktop front end for the repository formatter.
+`SqlFormatterApp` is a WPF desktop front end for the repository formatter.
 
 It supports the same automatic dialect routing as `format-sql.ps1`:
 
@@ -12,9 +12,10 @@ It supports the same automatic dialect routing as `format-sql.ps1`:
 
 ## UI
 
-The app has two large editors:
+The app is split into three working areas:
 
 - **Input** on the left
+- **SQL Beautifier** settings in the middle
 - **Formatted Output** on the right
 
 Toolbar actions:
@@ -25,10 +26,13 @@ Toolbar actions:
 - **Replace Input**: move the formatted result back to the input editor
 - **Save Output**: save the formatted result
 - **Clear**: reset both editors
+- **Theme**: switch between the soft Light and Dark palettes
 
 `Ctrl+Enter` formats the current input. `Ctrl+Shift+S` saves the formatted output.
 
-The header also shows a lightweight dialect guess and lets you change the formatter's maximum line width. The default remains 120 columns.
+The selected UI theme is stored per Windows user under `%LOCALAPPDATA%\SqlFormatterApp` and is restored on the next launch. The light palette uses muted greys rather than a bright white canvas; the dark palette uses charcoal/slate surfaces rather than near-black backgrounds. Text, controls, selected ComboBox values and popup items use theme-aware foreground/background resources so labels remain readable in either mode. Windows system control colors are overridden inside the app as well, preventing native ComboBox templates from falling back to white-on-white or dark-on-dark text. The Windows title bar follows the selected mode on supported Windows builds.
+
+The SQL Beautifier panel includes presets plus granular controls for width, indentation, keyword casing, parentheses, SELECT/GROUP BY/ORDER BY and other lists, comma placement, joins, boolean operators, CTEs, CASE expressions and spacing. Formatter settings remain separate from the visual theme.
 
 ## Run from source
 
