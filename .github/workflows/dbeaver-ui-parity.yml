@@ -11,6 +11,17 @@ on:
       - 'format-*.ps1'
       - 'settings/**'
       - '.github/workflows/dbeaver-ui-parity.yml'
+  push:
+    branches: [ main ]
+    paths:
+      - 'format-dbeaver.ps1'
+      - 'format-ui-script.ps1'
+      - 'format-ui.ps1'
+      - 'format-sql.ps1'
+      - 'format-beautifier.ps1'
+      - 'format-*.ps1'
+      - 'settings/**'
+      - '.github/workflows/dbeaver-ui-parity.yml'
 
 jobs:
   dbeaver-ui-parity:
