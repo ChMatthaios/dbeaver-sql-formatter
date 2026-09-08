@@ -288,6 +288,35 @@ jobs:
             throw 'UPDATE or DELETE semantic predicates were lost.'
           }
 
+          $updateBlockMatch = [regex]::Match(
+            $ui,
+            '(?s)-- 03\. Extremely complicated UPDATE statement.*?(?=-- ={10,}\r?\n-- 04\.)'
+          )
+          if (-not $updateBlockMatch.Success) {
+            Write-Host $ui
+            throw 'Could not isolate UPDATE statement 03 for CASE regression checks.'
+          }
+          $updateBlock = $updateBlockMatch.Value
+
+          if ($updateBlock -match '(?im)\bTHEN\b[^\r\n]*\bWHEN\b') {
+            Write-Host $updateBlock
+            throw 'A later CASE WHEN branch was left attached to a previous THEN result.'
+          }
+
+          $segmentWhens = [regex]::Matches(
+            $updateBlock,
+            '(?im)^\s*WHEN\s+T\.TOTAL_AMOUNT\s*>=\s*(25000|10000|5000|1000)\b'
+          )
+          if ($segmentWhens.Count -ne 4) {
+            Write-Host $updateBlock
+            throw "CUSTOMER_SEGMENT CASE expected 4 independent WHEN branches, found $($segmentWhens.Count)."
+          }
+
+          if ($updateBlock -notmatch '(?im)^\s*WHEN\s+T\.TOTAL_AMOUNT\s*>=\s*50000\s+AND\s+T\.ORDER_COUNT\s*<=\s*2\b') {
+            Write-Host $updateBlock
+            throw 'REVIEW_REQUIRED_FLG second WHEN branch was not placed independently.'
+          }
+
       - name: Publish portable Windows app
         run: dotnet publish .\windows-app\SqlFormatterApp\SqlFormatterApp.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o .\artifacts\SqlFormatterApp
 
@@ -298,6 +327,7 @@ jobs:
           if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-sql.ps1)) { throw 'format-sql.ps1 was not bundled.' }
           if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-ui.ps1)) { throw 'format-ui.ps1 was not bundled.' }
           if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-ui-script.ps1)) { throw 'format-ui-script.ps1 was not bundled.' }
+          if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-case-branches.ps1)) { throw 'CASE branch repair formatter was not bundled.' }
           if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-semantic-polish.ps1)) { throw 'semantic polish formatter was not bundled.' }
           if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-ui-finalize.ps1)) { throw 'UI finalizer was not bundled.' }
           if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-beautifier.ps1)) { throw 'Advanced beautifier was not bundled.' }
