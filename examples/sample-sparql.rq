@@ -6,9 +6,9 @@ PREFIX ex:<http://example.com/>
 PREFIX xsd:<http://www.w3.org/2001/XMLSchema#>
 SELECT ?customer ?name ?country ?amount ?tier WHERE{?customer a ex:Customer;ex:name ?name;ex:country ?country.OPTIONAL{?customer ex:totalAmount ?amount.}BIND(IF(COALESCE(?amount,0)>=25000,"PLATINUM",IF(COALESCE(?amount,0)>=10000,"GOLD","STANDARD")) AS ?tier)FILTER(CONTAINS(LCASE(STR(?name)),"mat"))}ORDER BY DESC(?amount) ?name LIMIT 50 OFFSET 10
 
-# 02. GROUP BY + HAVING + aggregate FILTER
+# 02. GROUP BY + HAVING + conditional aggregate
 PREFIX ex:<http://example.com/>
-SELECT ?customer (COUNT(?order) AS ?orderCount) (SUM(?amount) AS ?totalAmount) (SUM(?amount) FILTER(?status=ex:Paid) AS ?paidAmount) WHERE{?order a ex:Order;ex:customer ?customer;ex:amount ?amount;ex:status ?status.}GROUP BY ?customer HAVING(SUM(?amount)>=1000) ORDER BY DESC(?totalAmount)
+SELECT ?customer (COUNT(?order) AS ?orderCount) (SUM(?amount) AS ?totalAmount) (SUM(IF(?status=ex:Paid,?amount,0)) AS ?paidAmount) WHERE{?order a ex:Order;ex:customer ?customer;ex:amount ?amount;ex:status ?status.}GROUP BY ?customer HAVING(SUM(?amount)>=1000) ORDER BY DESC(?totalAmount)
 
 # 03. UNION + MINUS
 PREFIX ex:<http://example.com/>
