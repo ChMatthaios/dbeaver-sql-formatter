@@ -12,6 +12,7 @@
 
 $ErrorActionPreference = 'Stop'
 $UnitFormatter = Join-Path $PSScriptRoot 'format-ui.ps1'
+$CaseBranchRepair = Join-Path $PSScriptRoot 'format-case-branches.ps1'
 
 function Test-UnsafeToSplit {
     param([string]$Text)
@@ -124,8 +125,18 @@ function Format-OneUnit {
     $formatted = $cleanUnit |
         powershell -NoProfile -ExecutionPolicy Bypass -File $UnitFormatter |
         Out-String
-
     $formatted = $formatted.TrimEnd("`r", "`n")
+
+    # Long searched CASE expressions can leave later WHEN branches attached to
+    # the preceding THEN result. Repair those branch boundaries only when the
+    # selected advanced profile explicitly requests multiline CASE formatting.
+    if (Test-Path $CaseBranchRepair) {
+        $formatted = $formatted |
+            powershell -NoProfile -ExecutionPolicy Bypass -File $CaseBranchRepair |
+            Out-String
+        $formatted = $formatted.TrimEnd("`r", "`n")
+    }
+
     return (Repair-DetachedJoinModifiers $formatted)
 }
 
