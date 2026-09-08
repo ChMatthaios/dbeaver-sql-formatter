@@ -5,9 +5,8 @@
     then applies UI-only semantic presentation passes for complex expressions,
     and finally applies the user's advanced beautifier preferences.
 
-    MERGE statements are already formatted by the dedicated MERGE container
-    formatter. They are protected while the generic UI presentation passes run,
-    so nested CTEs/SELECTs inside USING are not re-indented a second time.
+    MERGE statements are containers: their USING query is refined independently,
+    then the completed MERGE is protected from a second generic presentation pass.
 #>
 
 $ErrorActionPreference = 'Stop'
@@ -36,52 +35,169 @@ function Find-UiStatementEnd {
             if ($ch -eq "`n") { $lineComment = $false }
             continue
         }
-
         if ($blockComment) {
-            if ($ch -eq '*' -and $next -eq '/') {
-                $blockComment = $false
-                $i++
-            }
+            if ($ch -eq '*' -and $next -eq '/') { $blockComment = $false; $i++ }
             continue
         }
-
         if ($single) {
             if ($ch -eq "'") {
-                if ($next -eq "'") { $i++ }
-                else { $single = $false }
+                if ($next -eq "'") { $i++ } else { $single = $false }
             }
             continue
         }
-
         if ($double) {
             if ($ch -eq '"') {
-                if ($next -eq '"') { $i++ }
-                else { $double = $false }
+                if ($next -eq '"') { $i++ } else { $double = $false }
             }
             continue
         }
 
-        if ($ch -eq '-' -and $next -eq '-') {
-            $lineComment = $true
-            $i++
-            continue
-        }
-        if ($ch -eq '/' -and $next -eq '*') {
-            $blockComment = $true
-            $i++
-            continue
-        }
+        if ($ch -eq '-' -and $next -eq '-') { $lineComment = $true; $i++; continue }
+        if ($ch -eq '/' -and $next -eq '*') { $blockComment = $true; $i++; continue }
         if ($ch -eq "'") { $single = $true; continue }
         if ($ch -eq '"') { $double = $true; continue }
         if ($ch -eq '(') { $depth++; continue }
         if ($ch -eq ')') { if ($depth -gt 0) { $depth-- }; continue }
 
-        if ($ch -eq ';' -and $depth -eq 0) {
-            return $i + 1
+        if ($ch -eq ';' -and $depth -eq 0) { return $i + 1 }
+    }
+
+    return -1
+}
+
+function Find-UiMatchingParen {
+    param([string]$Text, [int]$OpenIndex)
+
+    $single = $false
+    $double = $false
+    $lineComment = $false
+    $blockComment = $false
+    $depth = 0
+
+    for ($i = $OpenIndex; $i -lt $Text.Length; $i++) {
+        $ch = $Text[$i]
+        $next = if ($i + 1 -lt $Text.Length) { $Text[$i + 1] } else { [char]0 }
+
+        if ($lineComment) {
+            if ($ch -eq "`n") { $lineComment = $false }
+            continue
+        }
+        if ($blockComment) {
+            if ($ch -eq '*' -and $next -eq '/') { $blockComment = $false; $i++ }
+            continue
+        }
+        if ($single) {
+            if ($ch -eq "'") {
+                if ($next -eq "'") { $i++ } else { $single = $false }
+            }
+            continue
+        }
+        if ($double) {
+            if ($ch -eq '"') {
+                if ($next -eq '"') { $i++ } else { $double = $false }
+            }
+            continue
+        }
+
+        if ($ch -eq '-' -and $next -eq '-') { $lineComment = $true; $i++; continue }
+        if ($ch -eq '/' -and $next -eq '*') { $blockComment = $true; $i++; continue }
+        if ($ch -eq "'") { $single = $true; continue }
+        if ($ch -eq '"') { $double = $true; continue }
+        if ($ch -eq '(') { $depth++; continue }
+        if ($ch -eq ')') {
+            $depth--
+            if ($depth -eq 0) { return $i }
         }
     }
 
     return -1
+}
+
+function Remove-UiCommonIndent {
+    param([string]$Text)
+
+    $lines = @($Text -split "`r?`n")
+    $indents = @(
+        $lines |
+            Where-Object { $_.Trim().Length -gt 0 } |
+            ForEach-Object { $_.Length - $_.TrimStart().Length }
+    )
+
+    if ($indents.Count -eq 0) { return $Text.Trim() }
+    $minimum = ($indents | Measure-Object -Minimum).Minimum
+    if ($minimum -le 0) { return $Text.Trim() }
+
+    return (($lines | ForEach-Object {
+        if ($_.Length -ge $minimum) { $_.Substring($minimum) } else { $_ }
+    }) -join [Environment]::NewLine).Trim()
+}
+
+function Invoke-UiPresentationPasses {
+    param([string]$Sql)
+
+    $formatted = $Sql.Trim()
+    if ([string]::IsNullOrWhiteSpace($formatted)) { return $formatted }
+
+    # Semantic polish can mistake a CTE's AS ( for a function-shaped expression.
+    $cteAsToken = '__SQLFMT_CTE_AS_OPEN__'
+    $polishInput = [regex]::Replace(
+        $formatted,
+        '(?im)^(\s*)AS\s+\(',
+        ('$1' + $cteAsToken)
+    )
+
+    $formatted = $polishInput |
+        powershell -NoProfile -ExecutionPolicy Bypass -File $SemanticPolish |
+        Out-String
+    $formatted = $formatted.TrimEnd("`r", "`n")
+    $formatted = $formatted.Replace($cteAsToken, 'AS (')
+
+    $formatted = $formatted |
+        powershell -NoProfile -ExecutionPolicy Bypass -File $UiFinalize |
+        Out-String
+    $formatted = $formatted.TrimEnd("`r", "`n")
+
+    if (Test-Path $Beautifier) {
+        $formatted = $formatted |
+            powershell -NoProfile -ExecutionPolicy Bypass -File $Beautifier |
+            Out-String
+        $formatted = $formatted.TrimEnd("`r", "`n")
+    }
+
+    return $formatted
+}
+
+function Refine-UiMergeUsingQueries {
+    param([string]$Text)
+
+    $matches = @([regex]::Matches($Text, '(?im)^[ \t]*MERGE\b'))
+    for ($m = $matches.Count - 1; $m -ge 0; $m--) {
+        $statementStart = $matches[$m].Index
+        $statementEnd = Find-UiStatementEnd -Text $Text -StartIndex $statementStart
+        if ($statementEnd -le $statementStart) { continue }
+
+        $statement = $Text.Substring($statementStart, $statementEnd - $statementStart)
+        $using = [regex]::Match($statement, '(?im)^[ \t]*USING\s*\(')
+        if (-not $using.Success) { continue }
+
+        $open = $statement.IndexOf('(', $using.Index)
+        if ($open -lt 0) { continue }
+        $close = Find-UiMatchingParen -Text $statement -OpenIndex $open
+        if ($close -le $open) { continue }
+
+        $inner = $statement.Substring($open + 1, $close - $open - 1)
+        $inner = Remove-UiCommonIndent $inner
+        if ($inner -notmatch '^(?is)(WITH|SELECT)\b') { continue }
+
+        $refined = Invoke-UiPresentationPasses $inner
+        $refinedLines = @($refined -split "`r?`n")
+        $placed = [Environment]::NewLine + (($refinedLines | ForEach-Object { '  ' + $_ }) -join [Environment]::NewLine) + [Environment]::NewLine + ' '
+
+        $statement = $statement.Substring(0, $open + 1) + $placed + $statement.Substring($close)
+        $Text = $Text.Substring(0, $statementStart) + $statement + $Text.Substring($statementEnd)
+    }
+
+    return $Text
 }
 
 function Protect-UiMergeStatements {
@@ -129,39 +245,13 @@ $formatted = $inputSql |
 $formatted = $formatted.TrimEnd("`r", "`n")
 
 if (-not [string]::IsNullOrWhiteSpace($formatted)) {
-    # MERGE has its own recursive formatter. Protect complete MERGE statements
-    # from the generic semantic/beautifier passes to prevent runaway indentation
-    # in USING (WITH ... SELECT ...) containers.
+    # A MERGE owns its outer layout, but its USING query is still an independent
+    # query unit and therefore receives the same presentation settings as any
+    # other SELECT/WITH query before the completed MERGE is protected.
+    $formatted = Refine-UiMergeUsingQueries $formatted
     $formatted = Protect-UiMergeStatements $formatted
 
-    # The semantic pass recognizes function-call shaped lines. A CTE's `AS (`
-    # has the same superficial shape, so protect that structural token while the
-    # pass works on expressions inside ordinary queries and restore it afterwards.
-    $cteAsToken = '__SQLFMT_CTE_AS_OPEN__'
-    $polishInput = [regex]::Replace(
-        $formatted,
-        '(?im)^(\s*)AS\s+\(',
-        ('$1' + $cteAsToken)
-    )
-
-    $formatted = $polishInput |
-        powershell -NoProfile -ExecutionPolicy Bypass -File $SemanticPolish |
-        Out-String
-    $formatted = $formatted.TrimEnd("`r", "`n")
-    $formatted = $formatted.Replace($cteAsToken, 'AS (')
-
-    $formatted = $formatted |
-        powershell -NoProfile -ExecutionPolicy Bypass -File $UiFinalize |
-        Out-String
-    $formatted = $formatted.TrimEnd("`r", "`n")
-
-    if (Test-Path $Beautifier) {
-        $formatted = $formatted |
-            powershell -NoProfile -ExecutionPolicy Bypass -File $Beautifier |
-            Out-String
-        $formatted = $formatted.TrimEnd("`r", "`n")
-    }
-
+    $formatted = Invoke-UiPresentationPasses $formatted
     $formatted = Restore-UiMergeStatements $formatted
 }
 
