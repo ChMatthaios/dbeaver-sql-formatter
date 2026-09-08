@@ -8,9 +8,30 @@ public partial class MainWindow
 {
     private void Window_SourceInitialized(object? sender, EventArgs e)
     {
+        SizeToComfortableWorkArea();
         ApplyThemedComboBoxTemplates();
         RefreshThemeButton();
         ThemeService.ApplyWindowChrome(this);
+    }
+
+    private void SizeToComfortableWorkArea()
+    {
+        var workArea = SystemParameters.WorkArea;
+
+        Width = Math.Clamp(workArea.Width * 0.58, 900, 1180);
+        Height = Math.Clamp(workArea.Height * 0.66, 560, 760);
+        Left = workArea.Left + ((workArea.Width - Width) / 2);
+        Top = workArea.Top + ((workArea.Height - Height) / 2);
+    }
+
+    private void Preferences_Click(object sender, RoutedEventArgs e)
+    {
+        PreferencesPopup.IsOpen = true;
+    }
+
+    private void PreferencesClose_Click(object sender, RoutedEventArgs e)
+    {
+        PreferencesPopup.IsOpen = false;
     }
 
     private void Theme_Click(object sender, RoutedEventArgs e)
