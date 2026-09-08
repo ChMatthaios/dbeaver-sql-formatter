@@ -126,7 +126,7 @@ $innerLines = @($formattedInner -split "`r?`n")
 $out = New-Object System.Collections.Generic.List[string]
 
 if ($prefix) { $out.Add($prefix) }
-$out.Add($header + '(')
+$out.Add($header + ' (')
 foreach ($line in $innerLines) {
     if ([string]::IsNullOrWhiteSpace($line)) { $out.Add('') }
     else { $out.Add($indent + $line) }
