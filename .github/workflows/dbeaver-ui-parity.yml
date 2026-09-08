@@ -95,16 +95,7 @@ jobs:
             },
             @{
               Name = 'PostgreSQL dollar-quoted routine'
-              Sql = @'
-create or replace function test_fn(p_id integer)
-returns integer
-language plpgsql
-as $$
-begin
-  return p_id + 1;
-end;
-$$;
-'@
+              Sql = 'create or replace function test_fn(p_id integer) returns integer language plpgsql as $$ begin return p_id + 1; end; $$;'
             },
             @{
               Name = 'SQL Server / T-SQL'
@@ -116,24 +107,11 @@ $$;
             },
             @{
               Name = 'Oracle PL/SQL'
-              Sql = @'
-create or replace procedure p_test(p_id in number) as
-begin
-  if p_id > 0 then
-    null;
-  end if;
-end;
-/
-'@
+              Sql = 'create or replace procedure p_test(p_id in number) as begin if p_id > 0 then null; end if; end; /'
             },
             @{
               Name = 'SPARQL'
-              Sql = @'
-PREFIX ex: <http://example.com/>
-SELECT ?s ?p ?o
-WHERE { ?s ?p ?o . FILTER(?s = ex:item) }
-LIMIT 10
-'@
+              Sql = 'PREFIX ex: <http://example.com/> SELECT ?s ?p ?o WHERE { ?s ?p ?o . FILTER(?s = ex:item) } LIMIT 10'
             },
             @{
               Name = 'Multi-statement common SQL'
