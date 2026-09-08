@@ -36,4 +36,4 @@ temp_*.sql
 *.output.sql
 
 # Local formatter preferences
-settings/settings.json
+formatter/settings/settings.json
