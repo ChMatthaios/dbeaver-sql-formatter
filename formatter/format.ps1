@@ -1,11 +1,11 @@
 <#
     SQL Formatter Test Runner
 
-    Usage:
-      .\format.ps1 -runall
-      .\format.ps1 -check
-      .\format.ps1 -file 01
-      .\format.ps1 -list
+    Usage from the repository root:
+      .\formatter\format.ps1 -runall
+      .\formatter\format.ps1 -check
+      .\formatter\format.ps1 -file 01
+      .\formatter\format.ps1 -list
 #>
 
 param(
@@ -17,16 +17,17 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$RootDir = $PSScriptRoot
-$Formatter = Join-Path $RootDir "format-sql.ps1"
+$FormatterDir = $PSScriptRoot
+$RootDir = Split-Path -Parent $FormatterDir
+$Formatter = Join-Path $FormatterDir "format-sql.ps1"
 $TestDir = Join-Path $RootDir "tests"
-$OutDir = Join-Path $RootDir "tests_out"
+$OutDir = Join-Path $TestDir "expected"
 
 function Show-PreferencesHelp {
     Write-Host "Preferences:"
     Write-Host "  Formatter preferences are read from:"
     Write-Host ""
-    Write-Host "      settings/settings.json"
+    Write-Host "      formatter/settings/settings.json"
     Write-Host ""
     Write-Host "  If the file does not exist, default preferences are used."
     Write-Host ""
@@ -40,36 +41,35 @@ function Show-PreferencesHelp {
     Write-Host '      }'
     Write-Host ""
     Write-Host "  To change preferences:"
-    Write-Host "    1. Create the settings folder if needed."
-    Write-Host "    2. Copy settings/settings.example.json to settings/settings.json."
-    Write-Host "    3. Edit settings/settings.json."
-    Write-Host "    4. Run the formatter again."
+    Write-Host "    1. Copy formatter/settings/settings.example.json to formatter/settings/settings.json."
+    Write-Host "    2. Edit formatter/settings/settings.json."
+    Write-Host "    3. Run the formatter again."
     Write-Host ""
-    Write-Host "  settings/settings.json is local/user-specific and should not normally be committed."
+    Write-Host "  formatter/settings/settings.json is local/user-specific and should not normally be committed."
 }
 
 function Show-Help {
     Write-Host ""
     Write-Host "DBeaver SQL Formatter - Test Runner"
     Write-Host ""
-    Write-Host "Usage:"
-    Write-Host "  .\format.ps1 -list"
-    Write-Host "  .\format.ps1 -check"
-    Write-Host "  .\format.ps1 -runall"
-    Write-Host "  .\format.ps1 -file 01"
-    Write-Host "  .\format.ps1 -file 04_complicated_multiline_statements.sql"
+    Write-Host "Usage from repository root:"
+    Write-Host "  .\formatter\format.ps1 -list"
+    Write-Host "  .\formatter\format.ps1 -check"
+    Write-Host "  .\formatter\format.ps1 -runall"
+    Write-Host "  .\formatter\format.ps1 -file 01"
+    Write-Host "  .\formatter\format.ps1 -file 04_complicated_multiline_statements.sql"
     Write-Host ""
     Write-Host "Modes:"
     Write-Host "  -list    Lists available SQL test input files."
-    Write-Host "  -check   Formats tests into a temp folder and compares them with tests_out."
-    Write-Host "  -runall  Regenerates outputs in tests_out."
+    Write-Host "  -check   Formats tests into a temp folder and compares them with tests/expected."
+    Write-Host "  -runall  Regenerates outputs in tests/expected."
     Write-Host "  -file    Formats one matching test file."
     Write-Host "  -help    Shows this help message."
     Write-Host ""
     Show-PreferencesHelp
     Write-Host ""
     Write-Host "Note:"
-    Write-Host "  DBeaver should call format-sql.ps1 directly."
+    Write-Host "  DBeaver should call formatter/format-dbeaver.ps1."
     Write-Host "  This runner is for local testing and development."
     Write-Host ""
 }
