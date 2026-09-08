@@ -137,6 +137,14 @@ function Expand-InlineExists {
             powershell -NoProfile -ExecutionPolicy Bypass -File $formatter |
             Out-String
         $nested = $nested.TrimEnd("`r", "`n")
+
+        # format-sql.ps1 treats the child SELECT as a standalone statement and may
+        # append a statement terminator. The child is being reinserted inside
+        # EXISTS (...), so that terminator belongs to the parent, not the child.
+        if ($nested.EndsWith(';')) {
+            $nested = $nested.Substring(0, $nested.Length - 1).TrimEnd()
+        }
+
         $nestedLines = @($nested -split "`r?`n")
 
         # A nested SELECT is a query unit, not just text belonging to WHEN.
