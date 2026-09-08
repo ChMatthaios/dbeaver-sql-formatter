@@ -75,7 +75,7 @@ function Find-TopLevelStatementEnd {
 function Split-TopLevelStatements {
     param([string]$Text)
 
-    if (Test-UnsafeToSplit $Text) { return @($Text) }
+    if (Test-UnsafeToSplit $Text) { return @($Text.Trim()) }
 
     $segments = New-Object System.Collections.Generic.List[string]
     $start = 0
@@ -83,17 +83,17 @@ function Split-TopLevelStatements {
     while ($start -lt $Text.Length) {
         $end = Find-TopLevelStatementEnd -Text $Text -StartIndex $start
         if ($end -le $start) {
-            $tail = $Text.Substring($start)
+            $tail = $Text.Substring($start).Trim()
             if (-not [string]::IsNullOrWhiteSpace($tail)) { $segments.Add($tail) }
             break
         }
 
-        $segment = $Text.Substring($start, $end - $start)
+        $segment = $Text.Substring($start, $end - $start).Trim()
         if (-not [string]::IsNullOrWhiteSpace($segment)) { $segments.Add($segment) }
         $start = $end
     }
 
-    if ($segments.Count -eq 0) { $segments.Add($Text) }
+    if ($segments.Count -eq 0) { $segments.Add($Text.Trim()) }
     return $segments.ToArray()
 }
 
@@ -105,7 +105,7 @@ function Repair-DetachedJoinModifiers {
     # Rejoin only an isolated SQL join modifier immediately followed by JOIN.
     return [regex]::Replace(
         $Text,
-        '(?im)^(?<indent>[ \t]*)(?<kind>INNER|LEFT|RIGHT|FULL|CROSS)(?<outer>[ \t]+OUTER)?[ \t]*\r?\n[ \t]*JOIN(?<rest>[^\r\n]*)$',
+        '(?im)^(?<indent>[ \t]*)(?<kind>INNER|LEFT|RIGHT|FULL|CROSS)(?<outer>[ \t]+OUTER)?[ \t]*\r?\n[ \t]*JOIN(?<rest>[^\r\n]*)\r?$',
         {
             param($m)
             return $m.Groups['indent'].Value +
@@ -120,7 +120,8 @@ function Repair-DetachedJoinModifiers {
 function Format-OneUnit {
     param([string]$Sql)
 
-    $formatted = $Sql |
+    $cleanUnit = $Sql.Trim()
+    $formatted = $cleanUnit |
         powershell -NoProfile -ExecutionPolicy Bypass -File $UnitFormatter |
         Out-String
 
