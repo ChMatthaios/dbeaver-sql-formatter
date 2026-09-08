@@ -7,18 +7,21 @@
         MinWidth="920"
         MinHeight="560"
         WindowStartupLocation="CenterScreen"
-        Background="#F3F4F6"
+        Background="#0B1120"
+        Foreground="#E5E7EB"
         PreviewKeyDown="Window_PreviewKeyDown">
   <Window.Resources>
     <Style TargetType="Button">
       <Setter Property="Margin" Value="0,0,8,0" />
       <Setter Property="Padding" Value="14,7" />
       <Setter Property="MinHeight" Value="34" />
-      <Setter Property="Background" Value="White" />
-      <Setter Property="BorderBrush" Value="#D1D5DB" />
+      <Setter Property="Background" Value="#1E293B" />
+      <Setter Property="Foreground" Value="#E5E7EB" />
+      <Setter Property="BorderBrush" Value="#334155" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="Cursor" Value="Hand" />
     </Style>
+
     <Style TargetType="TextBox" x:Key="EditorTextBox">
       <Setter Property="FontFamily" Value="Consolas" />
       <Setter Property="FontSize" Value="14" />
@@ -29,8 +32,11 @@
       <Setter Property="VerticalScrollBarVisibility" Value="Auto" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Padding" Value="12" />
-      <Setter Property="Background" Value="#FFFFFF" />
-      <Setter Property="Foreground" Value="#111827" />
+      <Setter Property="Background" Value="#0F172A" />
+      <Setter Property="Foreground" Value="#E2E8F0" />
+      <Setter Property="CaretBrush" Value="#F8FAFC" />
+      <Setter Property="SelectionBrush" Value="#334155" />
+      <Setter Property="SelectionTextBrush" Value="#F8FAFC" />
     </Style>
   </Window.Resources>
 
@@ -41,11 +47,16 @@
       <RowDefinition Height="34" />
     </Grid.RowDefinitions>
 
-    <Border Grid.Row="0" Background="#111827" Padding="12,10">
+    <Border Grid.Row="0" Background="#020617" BorderBrush="#1E293B" BorderThickness="0,0,0,1" Padding="12,10">
       <DockPanel LastChildFill="True">
         <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
           <Button Content="Open" Click="Open_Click" />
-          <Button x:Name="FormatButton" Content="Format  Ctrl+Enter" Click="Format_Click" Background="#DBEAFE" />
+          <Button x:Name="FormatButton"
+                  Content="Format  Ctrl+Enter"
+                  Click="Format_Click"
+                  Background="#2563EB"
+                  BorderBrush="#3B82F6"
+                  Foreground="#FFFFFF" />
           <Button Content="Copy Output" Click="CopyOutput_Click" />
           <Button Content="Replace Input" Click="ReplaceInput_Click" />
           <Button Content="Save Output" Click="SaveOutput_Click" />
@@ -53,10 +64,20 @@
         </StackPanel>
 
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-          <TextBlock Text="Max width" Foreground="#D1D5DB" VerticalAlignment="Center" Margin="0,0,8,0" />
-          <TextBox x:Name="WidthBox" Width="54" Height="30" VerticalContentAlignment="Center" TextAlignment="Center" Margin="0,0,14,0" />
-          <Border Background="#1F2937" CornerRadius="4" Padding="10,6">
-            <TextBlock x:Name="DialectText" Text="Dialect: Auto" Foreground="#F9FAFB" FontWeight="SemiBold" />
+          <TextBlock Text="Max width" Foreground="#94A3B8" VerticalAlignment="Center" Margin="0,0,8,0" />
+          <TextBox x:Name="WidthBox"
+                   Width="54"
+                   Height="30"
+                   VerticalContentAlignment="Center"
+                   TextAlignment="Center"
+                   Margin="0,0,14,0"
+                   Background="#0F172A"
+                   Foreground="#E2E8F0"
+                   CaretBrush="#F8FAFC"
+                   BorderBrush="#334155"
+                   SelectionBrush="#334155" />
+          <Border Background="#172033" BorderBrush="#334155" BorderThickness="1" CornerRadius="4" Padding="10,6">
+            <TextBlock x:Name="DialectText" Text="Dialect: Auto" Foreground="#CBD5E1" FontWeight="SemiBold" />
           </Border>
         </StackPanel>
       </DockPanel>
@@ -69,43 +90,50 @@
         <ColumnDefinition Width="*" />
       </Grid.ColumnDefinitions>
 
-      <Border Grid.Column="0" Background="White" BorderBrush="#D1D5DB" BorderThickness="1" CornerRadius="6">
+      <Border Grid.Column="0" Background="#0F172A" BorderBrush="#334155" BorderThickness="1" CornerRadius="6">
         <Grid>
           <Grid.RowDefinitions>
             <RowDefinition Height="38" />
             <RowDefinition Height="*" />
           </Grid.RowDefinitions>
-          <Border Grid.Row="0" Background="#F9FAFB" BorderBrush="#E5E7EB" BorderThickness="0,0,0,1" Padding="12,0">
+          <Border Grid.Row="0" Background="#111827" BorderBrush="#334155" BorderThickness="0,0,0,1" Padding="12,0">
             <DockPanel>
-              <TextBlock Text="Input" FontWeight="SemiBold" Foreground="#111827" VerticalAlignment="Center" />
-              <TextBlock x:Name="InputStatsText" DockPanel.Dock="Right" Foreground="#6B7280" VerticalAlignment="Center" />
+              <TextBlock Text="Input" FontWeight="SemiBold" Foreground="#F1F5F9" VerticalAlignment="Center" />
+              <TextBlock x:Name="InputStatsText" DockPanel.Dock="Right" Foreground="#94A3B8" VerticalAlignment="Center" />
             </DockPanel>
           </Border>
           <TextBox x:Name="InputBox" Grid.Row="1" Style="{StaticResource EditorTextBox}" TextChanged="InputBox_TextChanged" />
         </Grid>
       </Border>
 
-      <Border Grid.Column="2" Background="White" BorderBrush="#D1D5DB" BorderThickness="1" CornerRadius="6">
+      <Border Grid.Column="2" Background="#0F172A" BorderBrush="#334155" BorderThickness="1" CornerRadius="6">
         <Grid>
           <Grid.RowDefinitions>
             <RowDefinition Height="38" />
             <RowDefinition Height="*" />
           </Grid.RowDefinitions>
-          <Border Grid.Row="0" Background="#F9FAFB" BorderBrush="#E5E7EB" BorderThickness="0,0,0,1" Padding="12,0">
+          <Border Grid.Row="0" Background="#111827" BorderBrush="#334155" BorderThickness="0,0,0,1" Padding="12,0">
             <DockPanel>
-              <TextBlock Text="Formatted Output" FontWeight="SemiBold" Foreground="#111827" VerticalAlignment="Center" />
-              <TextBlock x:Name="OutputStatsText" DockPanel.Dock="Right" Foreground="#6B7280" VerticalAlignment="Center" />
+              <TextBlock Text="Formatted Output" FontWeight="SemiBold" Foreground="#F1F5F9" VerticalAlignment="Center" />
+              <TextBlock x:Name="OutputStatsText" DockPanel.Dock="Right" Foreground="#94A3B8" VerticalAlignment="Center" />
             </DockPanel>
           </Border>
-          <TextBox x:Name="OutputBox" Grid.Row="1" Style="{StaticResource EditorTextBox}" IsReadOnly="True" Background="#FCFCFD" />
+          <TextBox x:Name="OutputBox"
+                   Grid.Row="1"
+                   Style="{StaticResource EditorTextBox}"
+                   IsReadOnly="True"
+                   Background="#0B1324" />
         </Grid>
       </Border>
     </Grid>
 
-    <Border Grid.Row="2" Background="#E5E7EB" BorderBrush="#D1D5DB" BorderThickness="0,1,0,0" Padding="12,0">
+    <Border Grid.Row="2" Background="#0F172A" BorderBrush="#334155" BorderThickness="0,1,0,0" Padding="12,0">
       <DockPanel>
-        <TextBlock x:Name="StatusText" Text="Ready" VerticalAlignment="Center" Foreground="#374151" />
-        <TextBlock DockPanel.Dock="Right" Text="DB2 • PostgreSQL • T-SQL • Oracle / PL-SQL • SPARQL" VerticalAlignment="Center" Foreground="#6B7280" />
+        <TextBlock x:Name="StatusText" Text="Ready" VerticalAlignment="Center" Foreground="#CBD5E1" />
+        <TextBlock DockPanel.Dock="Right"
+                   Text="DB2 • PostgreSQL • T-SQL • Oracle / PL-SQL • SPARQL"
+                   VerticalAlignment="Center"
+                   Foreground="#64748B" />
       </DockPanel>
     </Border>
   </Grid>
