@@ -37,49 +37,66 @@ Main goals:
 
 ## Project structure
 
+The repository root is intentionally kept small. Formatter implementation files live together under `formatter/`, dialect documentation under `docs/`, and expected regression output under `tests/expected/`.
+
 ```text
 dbeaver-sql-formatter/
+├─ .github/
+│  └─ workflows/
 ├─ .gitignore
 ├─ README.md
-├─ format-dbeaver.ps1
-├─ format-ui-script.ps1
-├─ format-ui.ps1
-├─ format-beautifier.ps1
-├─ format-sql.ps1
-├─ format-sql-core.ps1
-├─ format-merge.ps1
-├─ format-polish.ps1
-├─ format.ps1
-├─ format-file.ps1
+├─ docs/
+│  ├─ ORACLE_PLSQL.md
+│  ├─ POSTGRESQL.md
+│  └─ SPARQL.md
+├─ examples/
+│  ├─ README.md
+│  └─ sample-*.sql / sample-*.rq
+├─ formatter/
+│  ├─ format-dbeaver.ps1
+│  ├─ format-ui-script.ps1
+│  ├─ format-ui.ps1
+│  ├─ format-beautifier.ps1
+│  ├─ format-sql.ps1
+│  ├─ format-sql-core.ps1
+│  ├─ format-merge.ps1
+│  ├─ format-polish.ps1
+│  ├─ format-file.ps1
+│  ├─ format.ps1
+│  ├─ other formatter passes and dialect engines
+│  └─ settings/
+│     └─ settings.example.json
 ├─ scripts/
 │  └─ install-sqlfmt-command.ps1
-├─ examples/
-│  └─ sample-db2.sql
-├─ settings/
-│  └─ settings.example.json
 ├─ tests/
-└─ tests_out/
+│  ├─ *.sql
+│  └─ expected/
+│     └─ *.out.sql
+└─ windows-app/
+   ├─ SqlFormatterApp/
+   ├─ test-data/
+   └─ publish.ps1
 ```
 
 Important files:
 
 | File | Purpose |
 |---|---|
-| `format-dbeaver.ps1` | DBeaver entry point. Delegates to the exact same full pipeline used by the Windows UI. |
-| `format-ui-script.ps1` | Shared script-level formatter used by the Windows UI and DBeaver wrapper. Handles multi-statement input and UI presentation repairs. |
-| `format-ui.ps1` | Shared per-statement UI presentation pipeline. |
-| `format-beautifier.ps1` | Applies the advanced formatting profile selected in the Windows UI. |
-| `format-sql.ps1` | Dialect-aware SQL engine used underneath the presentation pipeline. |
-| `format-sql-core.ps1` | Main heuristic common/DB2 SQL formatter. |
-| `format-merge.ps1` | Structural formatter for standalone DB2 `MERGE` statements. |
-| `format-polish.ps1` | Structural pass for long CASE conditions and logical groups. |
-| `format.ps1` | Test/development runner. |
-| `format-file.ps1` | Formats real `.sql` files. |
+| `formatter/format-dbeaver.ps1` | DBeaver entry point. Delegates to the exact same full pipeline used by the Windows UI. |
+| `formatter/format-ui-script.ps1` | Shared script-level formatter used by the Windows UI and DBeaver wrapper. Handles multi-statement input and presentation repairs. |
+| `formatter/format-ui.ps1` | Shared per-statement presentation pipeline. |
+| `formatter/format-beautifier.ps1` | Applies the advanced formatting profile selected in the Windows UI. |
+| `formatter/format-sql.ps1` | Dialect-aware SQL engine used underneath the presentation pipeline. |
+| `formatter/format-sql-core.ps1` | Main heuristic common/DB2 SQL formatter. |
+| `formatter/format-merge.ps1` | Structural formatter for standalone `MERGE` statements. |
+| `formatter/format-polish.ps1` | Structural pass for long CASE conditions and logical groups. |
+| `formatter/format.ps1` | Test/development runner. |
+| `formatter/format-file.ps1` | Formats real `.sql` files. |
 | `scripts/install-sqlfmt-command.ps1` | Optional installer for the `sqlfmt` command. |
 | `tests/` | Input regression tests. |
-| `tests_out/` | Expected formatted outputs. |
-| `settings/settings.json` | Local user preferences shared by the Windows UI and DBeaver. Usually ignored by Git. |
-| `settings/settings.example.json` | Example/default preferences. Safe to commit. |
+| `tests/expected/` | Expected formatted outputs. |
+| `formatter/settings/settings.json` | Local user preferences shared by the Windows UI and DBeaver. Usually ignored by Git. |
+| `formatter/settings/settings.example.json` | Example/default preferences. Safe to commit. |
 
 ---
 
@@ -108,72 +125,44 @@ The formatter should break on SQL structure before breaking arbitrary text. For 
          THEN 1
 ```
 
-over splitting a function call in the middle. Likewise, a long parenthesized OR group should prefer:
-
-```sql
-   AND (  CONDITION_1
-       OR CONDITION_2
-       OR CONDITION_3)
-```
+over splitting a function call in the middle.
 
 ### Shared Windows UI / DBeaver flow
 
 ```text
 selected SQL / editor SQL
         ↓ stdin
-format-dbeaver.ps1                Windows UI
-        ↓                            ↓
-        └──────→ format-ui-script.ps1
-                     ↓
-               format-ui.ps1
-                     ↓
-               format-sql.ps1
-                     ↓
-             dialect-specific engine
-                     ↓
-        semantic / CASE / DGTT presentation
-                     ↓
-             format-beautifier.ps1
-                     ↓
-          settings/settings.json
-                     ↓ stdout
-          identical formatted result
+formatter/format-dbeaver.ps1          Windows UI
+        ↓                                ↓
+        └──────→ formatter/format-ui-script.ps1
+                         ↓
+                   format-ui.ps1
+                         ↓
+                   format-sql.ps1
+                         ↓
+                 dialect-specific engine
+                         ↓
+            semantic / CASE / DGTT presentation
+                         ↓
+                 format-beautifier.ps1
+                         ↓
+          formatter/settings/settings.json
+                         ↓ stdout
+              identical formatted result
 ```
 
-This is intentional: DBeaver is not given a reduced formatter anymore. It receives the same script-level formatting and the same advanced preferences as the Windows application.
-
-### File formatting flow
-
-```text
-input.sql
-   ↓
-format-file.ps1
-   ↓ calls
-format-sql.ps1
-   ↓
-formatted output / output file
-```
+This is intentional: DBeaver is not given a reduced formatter. It receives the same script-level formatting and the same advanced preferences as the Windows application.
 
 ### Test flow
 
 ```text
 tests/*.sql
    ↓
-format.ps1 -check / -runall
+formatter/format.ps1 -check / -runall
    ↓ calls
-format-sql.ps1
+formatter/format-sql.ps1
    ↓
-tests_out/*.out.sql
-```
-
-### Optional `sqlfmt` flow
-
-```text
-sqlfmt --check / --runall / --file ...
-   ↓
-format.ps1 / format-file.ps1
-   ↓
-format-sql.ps1
+tests/expected/*.out.sql
 ```
 
 ---
@@ -199,101 +188,71 @@ cd dbeaver-sql-formatter
 Run the test check:
 
 ```powershell
-.\format.ps1 -check
+.\formatter\format.ps1 -check
 ```
 
 List test files:
 
 ```powershell
-.\format.ps1 -list
+.\formatter\format.ps1 -list
 ```
 
 Regenerate all expected outputs:
 
 ```powershell
-.\format.ps1 -runall
+.\formatter\format.ps1 -runall
+```
+
+Run the Windows app from source:
+
+```powershell
+dotnet run --project .\windows-app\SqlFormatterApp\SqlFormatterApp.csproj
 ```
 
 ---
 
 ## DBeaver setup
 
-### 1. Open SQL formatter settings
-
-In DBeaver:
+In DBeaver, open:
 
 ```text
 Window → Preferences → Editors → SQL Editor → SQL Formatting
 ```
 
-The exact wording may differ slightly depending on the DBeaver version.
-
-### 2. Configure external formatter
-
-Use PowerShell and point to `format-dbeaver.ps1`.
-
-Command shape:
+Configure the external formatter to point to:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "FULL_PATH_TO_REPOSITORY\format-dbeaver.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "FULL_PATH_TO_REPOSITORY\formatter\format-dbeaver.ps1"
 ```
 
-Example:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Path\To\dbeaver-sql-formatter\format-dbeaver.ps1"
-```
-
-Replace `C:\Path\To\dbeaver-sql-formatter` with your actual local path.
-
-Do not commit personal Windows paths to the repository.
-
-### 3. Use the same formatting profile as the Windows UI
-
-The Windows application writes its selected formatting preferences to:
+The shared formatting profile is stored at:
 
 ```text
-settings\settings.json
+formatter\settings\settings.json
 ```
 
-`format-dbeaver.ps1` runs the same presentation pipeline and reads that same file. Change a formatting preference in the Windows UI, save/apply it, and the next DBeaver format operation uses the same profile.
-
-### 4. Format SQL in DBeaver
-
-Use:
-
-```text
-Ctrl + Shift + F
-```
-
-DBeaver formats either the selected text or the query where the cursor currently is. The shared script-level formatter supports multi-statement selections and automatically routes supported dialect-specific syntax.
+Use `Ctrl + Shift + F` in DBeaver to format the selected SQL or current statement.
 
 ---
 
 ## Direct formatter usage
 
-For the exact Windows UI/DBeaver presentation result, use `format-dbeaver.ps1`:
+For the exact Windows UI/DBeaver presentation result:
 
 ```powershell
-Get-Content .\input.sql -Raw | powershell -NoProfile -ExecutionPolicy Bypass -File .\format-dbeaver.ps1
+Get-Content .\input.sql -Raw | powershell -NoProfile -ExecutionPolicy Bypass -File .\formatter\format-dbeaver.ps1
 ```
 
-The lower-level dialect-aware engine remains available as `format-sql.ps1`:
+For the lower-level dialect-aware engine:
 
 ```powershell
-Get-Content .\input.sql -Raw | powershell -NoProfile -ExecutionPolicy Bypass -File .\format-sql.ps1
+Get-Content .\input.sql -Raw | powershell -NoProfile -ExecutionPolicy Bypass -File .\formatter\format-sql.ps1
 ```
 
-For normal file usage, prefer `format-file.ps1`.
-
----
-
-## File formatting usage
-
-Show help:
+For normal file usage:
 
 ```powershell
-.\format-file.ps1 -help
+.\formatter\format-file.ps1 .\input.sql
 ```
 
 The formatter is intentionally conservative: correctness and stable SQL come before aggressive reformatting.
