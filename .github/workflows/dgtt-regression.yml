@@ -94,9 +94,11 @@ jobs:
             throw 'REV_MISMATCH_CNT alias disappeared.'
           }
 
-          if ($ui -match '(?i)END\s*\+\s*CASE') {
+          # Reject only END + CASE on one physical line. Newlines between sibling
+          # CASE expressions are the desired layout and must not count as failure.
+          if ($ui -match '(?i)END[ \t]*\+[ \t]*CASE') {
             Write-Host $ui
-            throw 'Sibling arithmetic CASE expressions are still attached as END + CASE.'
+            throw 'Sibling arithmetic CASE expressions are still attached as END + CASE on one line.'
           }
 
           $plusCaseCount = [regex]::Matches($ui, '(?im)^\s*\+\s+CASE\s*$').Count
