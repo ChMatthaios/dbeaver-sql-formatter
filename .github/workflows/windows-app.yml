@@ -203,6 +203,91 @@ jobs:
             throw 'MERGE formatting contains runaway indentation.'
           }
 
+      - name: Test multi-statement UPDATE and DELETE presentation
+        shell: pwsh
+        run: |
+          $settings = @{
+            maxLineLength = 120
+            indentSize = 2
+            keywordCasing = 'Uppercase'
+            preserveCommentLineBoundaries = $true
+            advanced = @{
+              enabled = $true
+              parentheses = @{
+                functionSpaceBeforeParen = 'NoSpace'
+                insideParentheses = 'NoSpace'
+                subqueryOpening = 'NewLine'
+                subqueryClosing = 'NewLine'
+                cteAsParenthesis = 'SameLine'
+              }
+              lists = @{
+                select = 'OnePerLine'
+                groupBy = 'OnePerLine'
+                orderBy = 'OnePerLine'
+                updateSet = 'OnePerLine'
+                insertColumns = 'OnePerLine'
+                values = 'Wrap'
+                inList = 'Wrap'
+                functionArguments = 'Wrap'
+                commaStyle = 'Trailing'
+                continuationIndent = 'Indent'
+              }
+              clauses = @{
+                alignment = 'Left'
+                booleanOperatorPosition = 'Leading'
+                joinLayout = 'EachNewLine'
+                onClause = 'NewLine'
+                cteLayout = 'CompactHeader'
+                blankLineBetweenCtes = $true
+              }
+              case = @{
+                style = 'Multiline'
+                thenResult = 'SameLine'
+                elseResult = 'SameLine'
+              }
+              spacing = @{
+                comparisonOperators = 'Spaced'
+                afterComma = 'Space'
+              }
+            }
+          }
+          $settings | ConvertTo-Json -Depth 10 | Set-Content .\settings\settings.json
+
+          $inputSql = Get-Content .\examples\sample-db2.sql -Raw
+          $ui = $inputSql |
+            powershell -NoProfile -ExecutionPolicy Bypass -File .\format-ui-script.ps1 |
+            Out-String
+          $ui = $ui.TrimEnd("`r", "`n")
+
+          $checks = @(
+            '(?m)^UPDATE REPORTING\.CUSTOMER_SUMMARY T\s*$',
+            '(?m)^\s+SET CUSTOMER_SEGMENT\b',
+            '(?m)^\s*WHERE T\.CUSTOMER_ID IN\b',
+            '(?m)^\s*INNER JOIN ORDER_HEADER O\b',
+            '(?m)^\s*LEFT JOIN CUSTOMER_ADDRESS A\b',
+            '(?m)^DELETE FROM CUSTOMER_STAGE S\s*$',
+            '(?m)^\s*WHERE S\.LOAD_BATCH_ID = 20260520\b',
+            '(?m)^\s*INNER JOIN LOAD_CONTROL LC\b',
+            '(?m)^\s*LEFT JOIN LOAD_ERROR E\b'
+          )
+          foreach ($pattern in $checks) {
+            if ($ui -notmatch $pattern) {
+              Write-Host $ui
+              throw "Multi-statement UPDATE/DELETE formatting check failed: $pattern"
+            }
+          }
+
+          if ($ui -match '(?m)^\s*(INNER|LEFT|RIGHT|FULL|CROSS)(?:\s+OUTER)?\s*$') {
+            Write-Host $ui
+            throw 'JOIN modifier was detached from JOIN.'
+          }
+          if ($ui -notmatch 'REVIEW_REQUIRED_FLG' -or
+              $ui -notmatch '(?m)^\s*AND NOT EXISTS\b' -or
+              $ui -notmatch '(?m)^\s*AND EXISTS\b') {
+            Write-Host $ui
+            throw 'UPDATE or DELETE semantic predicates were lost.'
+          }
+
       - name: Publish portable Windows app
         run: dotnet publish .\windows-app\SqlFormatterApp\SqlFormatterApp.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o .\artifacts\SqlFormatterApp
 
@@ -212,6 +297,7 @@ jobs:
           if (-not (Test-Path .\artifacts\SqlFormatterApp\SqlFormatterApp.exe)) { throw 'SqlFormatterApp.exe was not published.' }
           if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-sql.ps1)) { throw 'format-sql.ps1 was not bundled.' }
           if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-ui.ps1)) { throw 'format-ui.ps1 was not bundled.' }
+          if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-ui-script.ps1)) { throw 'format-ui-script.ps1 was not bundled.' }
           if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-semantic-polish.ps1)) { throw 'semantic polish formatter was not bundled.' }
           if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-ui-finalize.ps1)) { throw 'UI finalizer was not bundled.' }
           if (-not (Test-Path .\artifacts\SqlFormatterApp\Formatter\format-beautifier.ps1)) { throw 'Advanced beautifier was not bundled.' }
