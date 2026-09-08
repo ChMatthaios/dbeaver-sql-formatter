@@ -4,15 +4,15 @@ on:
   pull_request:
     paths:
       - 'windows-app/**'
-      - 'format-*.ps1'
-      - 'settings/**'
+      - 'formatter/format-*.ps1'
+      - 'formatter/settings/**'
       - '.github/workflows/windows-app.yml'
   push:
     branches: [ main ]
     paths:
       - 'windows-app/**'
-      - 'format-*.ps1'
-      - 'settings/**'
+      - 'formatter/format-*.ps1'
+      - 'formatter/settings/**'
       - '.github/workflows/windows-app.yml'
 
 jobs:
@@ -40,11 +40,11 @@ jobs:
             indentSize = 2
             keywordCasing = 'Uppercase'
             preserveCommentLineBoundaries = $true
-          } | ConvertTo-Json | Set-Content .\settings\settings.json
+          } | ConvertTo-Json | Set-Content .\formatter\settings\settings.json
 
           $inputSql = Get-Content .\windows-app\test-data\structured-complex-db2.sql -Raw
           $actual = $inputSql |
-            powershell -NoProfile -ExecutionPolicy Bypass -File .\format-ui.ps1 |
+            powershell -NoProfile -ExecutionPolicy Bypass -File .\formatter\format-ui.ps1 |
             Out-String
           $actual = $actual.TrimEnd("`r", "`n")
           $expected = (Get-Content .\windows-app\test-data\structured-complex-db2.expected.sql -Raw).TrimEnd("`r", "`n")
@@ -104,11 +104,11 @@ jobs:
               }
             }
           }
-          $settings | ConvertTo-Json -Depth 10 | Set-Content .\settings\settings.json
+          $settings | ConvertTo-Json -Depth 10 | Set-Content .\formatter\settings\settings.json
 
           $inputSql = Get-Content .\windows-app\test-data\beautifier-canonical.sql -Raw
           $actual = $inputSql |
-            powershell -NoProfile -ExecutionPolicy Bypass -File .\format-beautifier.ps1 |
+            powershell -NoProfile -ExecutionPolicy Bypass -File .\formatter\format-beautifier.ps1 |
             Out-String
           $actual = $actual.TrimEnd("`r", "`n")
           $expected = (Get-Content .\windows-app\test-data\beautifier-canonical.expected.sql -Raw).TrimEnd("`r", "`n")
@@ -168,11 +168,11 @@ jobs:
               }
             }
           }
-          $settings | ConvertTo-Json -Depth 10 | Set-Content .\settings\settings.json
+          $settings | ConvertTo-Json -Depth 10 | Set-Content .\formatter\settings\settings.json
 
           $inputSql = Get-Content .\windows-app\test-data\merge-nested-cte.sql -Raw
           $ui = $inputSql |
-            powershell -NoProfile -ExecutionPolicy Bypass -File .\format-ui.ps1 |
+            powershell -NoProfile -ExecutionPolicy Bypass -File .\formatter\format-ui.ps1 |
             Out-String
           $ui = $ui.TrimEnd("`r", "`n")
 
@@ -251,11 +251,11 @@ jobs:
               }
             }
           }
-          $settings | ConvertTo-Json -Depth 10 | Set-Content .\settings\settings.json
+          $settings | ConvertTo-Json -Depth 10 | Set-Content .\formatter\settings\settings.json
 
           $inputSql = Get-Content .\examples\sample-db2.sql -Raw
           $ui = $inputSql |
-            powershell -NoProfile -ExecutionPolicy Bypass -File .\format-ui-script.ps1 |
+            powershell -NoProfile -ExecutionPolicy Bypass -File .\formatter\format-ui-script.ps1 |
             Out-String
           $ui = $ui.TrimEnd("`r", "`n")
 
