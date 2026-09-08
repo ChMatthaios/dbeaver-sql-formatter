@@ -120,7 +120,7 @@ jobs:
             throw 'Advanced beautifier regression failed.'
           }
 
-      - name: Test MERGE UI safety
+      - name: Test MERGE nested CTE presentation
         shell: pwsh
         run: |
           $settings = @{
@@ -171,21 +171,26 @@ jobs:
           $settings | ConvertTo-Json -Depth 10 | Set-Content .\settings\settings.json
 
           $inputSql = Get-Content .\windows-app\test-data\merge-nested-cte.sql -Raw
-          $core = $inputSql |
-            powershell -NoProfile -ExecutionPolicy Bypass -File .\format-sql.ps1 |
-            Out-String
           $ui = $inputSql |
             powershell -NoProfile -ExecutionPolicy Bypass -File .\format-ui.ps1 |
             Out-String
-          $core = $core.TrimEnd("`r", "`n")
           $ui = $ui.TrimEnd("`r", "`n")
 
-          if ($ui -ne $core) {
-            Write-Host '--- DEDICATED MERGE FORMATTER ---'
-            Write-Host $core
-            Write-Host '--- WINDOWS UI OUTPUT ---'
+          if ($ui -notmatch '(?m)^\s+BASE_ORDERS\s+AS\s*\(') {
             Write-Host $ui
-            throw 'Generic UI beautifier altered a dedicated MERGE container.'
+            throw 'MERGE USING query did not apply compact CTE formatting to BASE_ORDERS.'
+          }
+          if ($ui -notmatch '(?m)^\s+CUSTOMER_AGG\s+AS\s*\(') {
+            Write-Host $ui
+            throw 'MERGE USING query did not format CUSTOMER_AGG as a complete CTE header.'
+          }
+          if ($ui -match '(?m)^\s*CUSTOMER_AGG\s*$') {
+            Write-Host $ui
+            throw 'CUSTOMER_AGG was left as a detached CTE-name line.'
+          }
+          if ($ui -notmatch '(?m)^\s*WHEN MATCHED\b') {
+            Write-Host $ui
+            throw 'MERGE outer WHEN MATCHED action was damaged.'
           }
 
           $badIndent = @($ui -split "`r?`n" | Where-Object {
