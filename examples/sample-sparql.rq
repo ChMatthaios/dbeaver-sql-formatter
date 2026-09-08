@@ -1,0 +1,43 @@
+# SPARQL 1.1 formatter stress tests.
+# Each numbered block is an independent query/update. In DBeaver, select one block at a time.
+
+# 01. SELECT + OPTIONAL + FILTER + BIND + ORDER/LIMIT/OFFSET
+PREFIX ex:<http://example.com/>
+PREFIX xsd:<http://www.w3.org/2001/XMLSchema#>
+SELECT ?customer ?name ?country ?amount ?tier WHERE{?customer a ex:Customer;ex:name ?name;ex:country ?country.OPTIONAL{?customer ex:totalAmount ?amount.}BIND(IF(COALESCE(?amount,0)>=25000,"PLATINUM",IF(COALESCE(?amount,0)>=10000,"GOLD","STANDARD")) AS ?tier)FILTER(CONTAINS(LCASE(STR(?name)),"mat"))}ORDER BY DESC(?amount) ?name LIMIT 50 OFFSET 10
+
+# 02. GROUP BY + HAVING + conditional aggregate
+PREFIX ex:<http://example.com/>
+SELECT ?customer (COUNT(?order) AS ?orderCount) (SUM(?amount) AS ?totalAmount) (SUM(IF(?status=ex:Paid,?amount,0)) AS ?paidAmount) WHERE{?order a ex:Order;ex:customer ?customer;ex:amount ?amount;ex:status ?status.}GROUP BY ?customer HAVING(SUM(?amount)>=1000) ORDER BY DESC(?totalAmount)
+
+# 03. UNION + MINUS
+PREFIX ex:<http://example.com/>
+SELECT DISTINCT ?customer WHERE{{?customer a ex:Customer;ex:country ex:Greece.}UNION{?customer a ex:Customer;ex:tier ex:VIP.}MINUS{?customer ex:blacklisted true.}}
+
+# 04. GRAPH + SERVICE
+PREFIX ex:<http://example.com/>
+SELECT ?customer ?name ?score WHERE{GRAPH <http://example.com/customers>{?customer ex:name ?name.}SERVICE <https://example.org/sparql>{?customer ex:score ?score.FILTER(?score>80)}}ORDER BY DESC(?score)
+
+# 05. VALUES + subquery
+PREFIX ex:<http://example.com/>
+SELECT ?country ?customer ?total WHERE{VALUES ?country{ex:Greece ex:Cyprus ex:Italy}{SELECT ?country ?customer (SUM(?amount) AS ?total) WHERE{?order ex:customer ?customer;ex:amount ?amount.?customer ex:country ?country.}GROUP BY ?country ?customer}FILTER(?total>=5000)}ORDER BY ?country DESC(?total)
+
+# 06. CONSTRUCT
+PREFIX ex:<http://example.com/>
+CONSTRUCT{?customer ex:segment ?segment.}WHERE{?customer a ex:Customer;ex:totalAmount ?amount.BIND(IF(?amount>=25000,ex:Platinum,IF(?amount>=10000,ex:Gold,ex:Standard)) AS ?segment)}
+
+# 07. ASK
+PREFIX ex:<http://example.com/>
+ASK WHERE{?customer a ex:Customer;ex:blacklisted true;ex:active true.}
+
+# 08. INSERT DATA
+PREFIX ex:<http://example.com/>
+INSERT DATA{ex:customer-1001 a ex:Customer;ex:name "Matt"@en;ex:country ex:Greece;ex:active true.}
+
+# 09. DELETE/INSERT WHERE
+PREFIX ex:<http://example.com/>
+DELETE{?customer ex:segment ?oldSegment.}INSERT{?customer ex:segment ?newSegment.}WHERE{?customer ex:totalAmount ?amount.OPTIONAL{?customer ex:segment ?oldSegment.}BIND(IF(?amount>=25000,ex:Platinum,IF(?amount>=10000,ex:Gold,ex:Standard)) AS ?newSegment)}
+
+# 10. WITH + DELETE/INSERT + USING
+PREFIX ex:<http://example.com/>
+WITH <http://example.com/customers> DELETE{?customer ex:lastReviewed ?oldDate.}INSERT{?customer ex:lastReviewed ?now.}USING <http://example.com/orders> WHERE{?customer a ex:Customer.OPTIONAL{?customer ex:lastReviewed ?oldDate.}BIND(NOW() AS ?now)}
