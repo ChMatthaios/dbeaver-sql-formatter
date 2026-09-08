@@ -3,13 +3,13 @@ name: CASE condition regression
 on:
   pull_request:
     paths:
-      - 'format-case-condition-detail.ps1'
-      - 'format-case-branches.ps1'
-      - 'format-ui-script.ps1'
-      - 'format-ui.ps1'
-      - 'format-sql*.ps1'
+      - 'formatter/format-case-condition-detail.ps1'
+      - 'formatter/format-case-branches.ps1'
+      - 'formatter/format-ui-script.ps1'
+      - 'formatter/format-ui.ps1'
+      - 'formatter/format-sql*.ps1'
       - 'examples/sample-db2.sql'
-      - 'settings/**'
+      - 'formatter/settings/**'
       - '.github/workflows/case-condition-regression.yml'
 
 jobs:
@@ -67,11 +67,11 @@ jobs:
               }
             }
           }
-          $settings | ConvertTo-Json -Depth 10 | Set-Content .\settings\settings.json
+          $settings | ConvertTo-Json -Depth 10 | Set-Content .\formatter\settings\settings.json
 
           $inputSql = Get-Content .\examples\sample-db2.sql -Raw
           $ui = $inputSql |
-            powershell -NoProfile -ExecutionPolicy Bypass -File .\format-ui-script.ps1 |
+            powershell -NoProfile -ExecutionPolicy Bypass -File .\formatter\format-ui-script.ps1 |
             Out-String
           $ui = $ui.TrimEnd("`r", "`n")
 
