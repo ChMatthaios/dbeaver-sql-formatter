@@ -1,0 +1,93 @@
+name: CASE condition regression
+
+on:
+  pull_request:
+    paths:
+      - 'format-case-condition-detail.ps1'
+      - 'format-case-branches.ps1'
+      - 'format-ui-script.ps1'
+      - 'format-ui.ps1'
+      - 'format-sql*.ps1'
+      - 'examples/sample-db2.sql'
+      - 'settings/**'
+      - '.github/workflows/case-condition-regression.yml'
+
+jobs:
+  case-condition:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify nested CASE conditions
+        shell: pwsh
+        run: |
+          $settings = @{
+            maxLineLength = 120
+            indentSize = 2
+            keywordCasing = 'Uppercase'
+            preserveCommentLineBoundaries = $true
+            advanced = @{
+              enabled = $true
+              parentheses = @{
+                functionSpaceBeforeParen = 'NoSpace'
+                insideParentheses = 'NoSpace'
+                subqueryOpening = 'NewLine'
+                subqueryClosing = 'NewLine'
+                cteAsParenthesis = 'SameLine'
+              }
+              lists = @{
+                select = 'OnePerLine'
+                groupBy = 'OnePerLine'
+                orderBy = 'OnePerLine'
+                updateSet = 'OnePerLine'
+                insertColumns = 'OnePerLine'
+                values = 'Wrap'
+                inList = 'Wrap'
+                functionArguments = 'Wrap'
+                commaStyle = 'Trailing'
+                continuationIndent = 'Indent'
+              }
+              clauses = @{
+                alignment = 'Left'
+                booleanOperatorPosition = 'Leading'
+                joinLayout = 'EachNewLine'
+                onClause = 'NewLine'
+                cteLayout = 'CompactHeader'
+                blankLineBetweenCtes = $true
+              }
+              case = @{
+                style = 'Multiline'
+                thenResult = 'NewLine'
+                elseResult = 'NewLine'
+              }
+              spacing = @{
+                comparisonOperators = 'Spaced'
+                afterComma = 'Space'
+              }
+            }
+          }
+          $settings | ConvertTo-Json -Depth 10 | Set-Content .\settings\settings.json
+
+          $inputSql = Get-Content .\examples\sample-db2.sql -Raw
+          $ui = $inputSql |
+            powershell -NoProfile -ExecutionPolicy Bypass -File .\format-ui-script.ps1 |
+            Out-String
+          $ui = $ui.TrimEnd("`r", "`n")
+
+          $existsPattern = '(?ms)REVIEW_REQUIRED_FLG\s*=\s*CASE.*?WHEN\s+EXISTS\s*\(SELECT\s+1\r?\n\s+FROM\s+CUSTOMER_BLACKLIST\s+BL\r?\n\s+WHERE\s+BL\.CUSTOMER_ID\s*=\s*T\.CUSTOMER_ID\r?\n\s+AND\s+BL\.IS_ACTIVE\s*=\s*1\)\r?\n\s+THEN\s+1'
+          if ($ui -notmatch $existsPattern) {
+            Write-Host $ui
+            throw 'CASE EXISTS subquery was not formatted as an independent nested query.'
+          }
+
+          $compoundPattern = '(?ms)WHEN\s+T\.TOTAL_AMOUNT\s*>=\s*50000\r?\n\s+AND\s+T\.ORDER_COUNT\s*<=\s*2\r?\n\s+THEN\s+1'
+          if ($ui -notmatch $compoundPattern) {
+            Write-Host $ui
+            throw 'Compound CASE WHEN predicate was not split according to leading boolean style.'
+          }
+
+          if ($ui -match '(?i)WHEN\s+EXISTS\s*\(SELECT\s+1\s+FROM\s+CUSTOMER_BLACKLIST') {
+            Write-Host $ui
+            throw 'CASE EXISTS nested SELECT collapsed back onto one physical line.'
+          }
