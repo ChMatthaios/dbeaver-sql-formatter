@@ -3,10 +3,10 @@
 The same DBeaver external formatter command can format SPARQL as well as the supported SQL dialects:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Path\To\dbeaver-sql-formatter\format-sql.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Path\To\dbeaver-sql-formatter\formatter\format-dbeaver.ps1"
 ```
 
-`format-sql.ps1` detects strong SPARQL syntax signals and routes the selected text to `format-sparql.ps1`. The SPARQL path is isolated from the SQL polish passes so RDF graph syntax is never treated as SQL.
+`formatter/format-dbeaver.ps1` delegates to the same full presentation pipeline used by the Windows UI. Strong SPARQL syntax signals are routed underneath to `formatter/format-sparql.ps1`. The SPARQL path is isolated from SQL polish passes so RDF graph syntax is never treated as SQL.
 
 ## Covered
 
@@ -22,7 +22,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Path\To\dbeaver-sql-form
 - `WITH` and `USING` update clauses
 - RDF string literals, language tags, datatype markers (`^^`), IRIs, prefixed names, and variables
 - `#` comments inside SPARQL input
-- the repository-wide configurable 120-column margin
+- the repository-wide configurable line margin
 
 ## Formatting philosophy
 
@@ -32,4 +32,4 @@ Keywords are uppercased, while IRIs, prefixed names, variables, RDF literals, an
 
 ## DBeaver
 
-No second formatter configuration is required. Keep the existing external formatter command and use `Ctrl + Shift + F` on a complete SPARQL query or update request.
+No second formatter configuration is required. Keep the external formatter pointed at `formatter/format-dbeaver.ps1` and use `Ctrl + Shift + F` on a complete SPARQL query or update request.
