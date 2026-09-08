@@ -1,7 +1,0 @@
-PREFIX ex: <http://example.com/>
-INSERT DATA {
-  GRAPH <http://example.com/graph> {
-    ex:alice a ex:Person ;
-      ex:name "Alice"@en .
-  }
-}

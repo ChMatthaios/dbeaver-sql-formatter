@@ -1,9 +1,0 @@
-PREFIX ex: <http://example.com/>
-SELECT ?person ?name
-WHERE {
-  ?person a ex:Person ;
-    ex:name ?name .
-  FILTER (CONTAINS (LCASE (STR (?name)), "mat"))
-}
-ORDER BY ?name
-LIMIT 25
