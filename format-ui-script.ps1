@@ -129,8 +129,8 @@ function Format-OneUnit {
 
     # DB2 DGTT AS (...) contains a complete child query. Format that child with
     # its own width budget and then place it back under the parent declaration.
-    if (Test-Path $DgttFormatter -and
-        $cleanUnit -match '(?is)\bDECLARE\s+GLOBAL\s+TEMPORARY\s+TABLE\b.*?\bAS\s*\(') {
+    $isDgtt = $cleanUnit -match '(?is)\bDECLARE\s+GLOBAL\s+TEMPORARY\s+TABLE\b.*?\bAS\s*\('
+    if ((Test-Path $DgttFormatter) -and $isDgtt) {
         $formatter = $DgttFormatter
     }
 
