@@ -176,7 +176,7 @@ jobs:
             Out-String
           $ui = $ui.TrimEnd("`r", "`n")
 
-          if ($ui -notmatch '(?m)^\s+BASE_ORDERS\s+AS\s*\(') {
+          if ($ui -notmatch '(?m)^\s+WITH\s+BASE_ORDERS\s+AS\s*\(') {
             Write-Host $ui
             throw 'MERGE USING query did not apply compact CTE formatting to BASE_ORDERS.'
           }
