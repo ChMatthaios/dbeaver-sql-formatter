@@ -3,24 +3,24 @@ name: DBeaver UI parity
 on:
   pull_request:
     paths:
-      - 'format-dbeaver.ps1'
-      - 'format-ui-script.ps1'
-      - 'format-ui.ps1'
-      - 'format-sql.ps1'
-      - 'format-beautifier.ps1'
-      - 'format-*.ps1'
-      - 'settings/**'
+      - 'formatter/format-dbeaver.ps1'
+      - 'formatter/format-ui-script.ps1'
+      - 'formatter/format-ui.ps1'
+      - 'formatter/format-sql.ps1'
+      - 'formatter/format-beautifier.ps1'
+      - 'formatter/format-*.ps1'
+      - 'formatter/settings/**'
       - '.github/workflows/dbeaver-ui-parity.yml'
   push:
     branches: [ main ]
     paths:
-      - 'format-dbeaver.ps1'
-      - 'format-ui-script.ps1'
-      - 'format-ui.ps1'
-      - 'format-sql.ps1'
-      - 'format-beautifier.ps1'
-      - 'format-*.ps1'
-      - 'settings/**'
+      - 'formatter/format-dbeaver.ps1'
+      - 'formatter/format-ui-script.ps1'
+      - 'formatter/format-ui.ps1'
+      - 'formatter/format-sql.ps1'
+      - 'formatter/format-beautifier.ps1'
+      - 'formatter/format-*.ps1'
+      - 'formatter/settings/**'
       - '.github/workflows/dbeaver-ui-parity.yml'
 
 jobs:
@@ -78,7 +78,7 @@ jobs:
               }
             }
           }
-          $settings | ConvertTo-Json -Depth 10 | Set-Content .\settings\settings.json
+          $settings | ConvertTo-Json -Depth 10 | Set-Content .\formatter\settings\settings.json
 
           $cases = @(
             @{
@@ -121,12 +121,12 @@ jobs:
 
           foreach ($case in $cases) {
             $ui = $case.Sql |
-              powershell -NoProfile -ExecutionPolicy Bypass -File .\format-ui-script.ps1 |
+              powershell -NoProfile -ExecutionPolicy Bypass -File .\formatter\format-ui-script.ps1 |
               Out-String
             $ui = $ui.TrimEnd("`r", "`n")
 
             $dbeaver = $case.Sql |
-              powershell -NoProfile -ExecutionPolicy Bypass -File .\format-dbeaver.ps1 |
+              powershell -NoProfile -ExecutionPolicy Bypass -File .\formatter\format-dbeaver.ps1 |
               Out-String
             $dbeaver = $dbeaver.TrimEnd("`r", "`n")
 
