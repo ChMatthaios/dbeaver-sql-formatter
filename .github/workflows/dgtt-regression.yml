@@ -4,12 +4,12 @@ on:
   pull_request:
     paths:
       - 'examples/sample-db2.sql'
-      - 'format-dgtt-ui.ps1'
-      - 'format-case-arithmetic.ps1'
-      - 'format-case-branches.ps1'
-      - 'format-ui-script.ps1'
-      - 'format-ui.ps1'
-      - 'settings/**'
+      - 'formatter/format-dgtt-ui.ps1'
+      - 'formatter/format-case-arithmetic.ps1'
+      - 'formatter/format-case-branches.ps1'
+      - 'formatter/format-ui-script.ps1'
+      - 'formatter/format-ui.ps1'
+      - 'formatter/settings/**'
       - '.github/workflows/dgtt-regression.yml'
 
 jobs:
@@ -67,11 +67,11 @@ jobs:
               }
             }
           }
-          $settings | ConvertTo-Json -Depth 10 | Set-Content .\settings\settings.json
+          $settings | ConvertTo-Json -Depth 10 | Set-Content .\formatter\settings\settings.json
 
           $inputSql = Get-Content .\examples\sample-db2.sql -Raw
           $ui = $inputSql |
-            powershell -NoProfile -ExecutionPolicy Bypass -File .\format-ui-script.ps1 |
+            powershell -NoProfile -ExecutionPolicy Bypass -File .\formatter\format-ui-script.ps1 |
             Out-String
           $ui = $ui.TrimEnd("`r", "`n")
 
@@ -94,8 +94,6 @@ jobs:
             throw 'REV_MISMATCH_CNT alias disappeared.'
           }
 
-          # Reject only END + CASE on one physical line. Newlines between sibling
-          # CASE expressions are the desired layout and must not count as failure.
           if ($ui -match '(?i)END[ \t]*\+[ \t]*CASE') {
             Write-Host $ui
             throw 'Sibling arithmetic CASE expressions are still attached as END + CASE on one line.'
