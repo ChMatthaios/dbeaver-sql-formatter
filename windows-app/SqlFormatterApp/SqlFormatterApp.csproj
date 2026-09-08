@@ -11,11 +11,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Content Include="..\..\format-*.ps1"
+    <Content Include="..\..\formatter\format-*.ps1"
              Link="Formatter\%(Filename)%(Extension)"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="..\..\settings\settings.example.json"
+    <Content Include="..\..\formatter\settings\settings.example.json"
              Link="Formatter\settings\settings.example.json"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />
