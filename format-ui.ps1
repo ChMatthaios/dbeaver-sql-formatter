@@ -155,9 +155,10 @@ function Normalize-UiCteHeaders {
     if ($Mode -ne 'CompactHeader') { return $Sql }
 
     $lines = @($Sql -split "`r?`n")
-    $out = New-Object System.Collections.Generic.List[string]
+    $combined = New-Object System.Collections.Generic.List[string]
     $i = 0
 
+    # First combine any two-line "CTE_NAME" / "AS (" headers.
     while ($i -lt $lines.Count) {
         if ($i + 1 -lt $lines.Count) {
             $first = [regex]::Match(
@@ -174,15 +175,49 @@ function Normalize-UiCteHeaders {
             if ($first.Success -and $second.Success) {
                 $prefix = $first.Groups['indent'].Value
                 if ($first.Groups['with'].Success) { $prefix += 'WITH ' }
-                $candidate = $prefix + $first.Groups['name'].Value + ' ' + $lines[$i + 1].TrimStart()
-                $out.Add($candidate)
+                $tail = $lines[$i + 1].TrimStart() -replace '^(?i)AS\s*\(', 'AS ('
+                $combined.Add($prefix + $first.Groups['name'].Value + ' ' + $tail)
                 $i += 2
                 continue
             }
         }
 
-        $out.Add($lines[$i])
+        $combined.Add($lines[$i])
         $i++
+    }
+
+    # Then align all CTE headers to the indentation of the initial WITH CTE.
+    # This prevents later CTEs such as CUSTOMER_AGG from drifting right even
+    # when the core formatter had to wrap an earlier nested expression.
+    $out = New-Object System.Collections.Generic.List[string]
+    $cteIndent = $null
+
+    foreach ($line in $combined) {
+        $header = [regex]::Match(
+            $line,
+            '^(?<indent>\s*)(?<with>WITH\s+)?(?<name>[A-Za-z_][A-Za-z0-9_$#]*)\s+AS\s*\((?<tail>.*)$',
+            [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+        )
+
+        if ($header.Success) {
+            if ($header.Groups['with'].Success) {
+                $cteIndent = $header.Groups['indent'].Value
+                $prefix = $cteIndent + 'WITH '
+            }
+            elseif ($null -ne $cteIndent) {
+                $prefix = $cteIndent
+            }
+            else {
+                $prefix = $header.Groups['indent'].Value
+            }
+
+            $normalized = $prefix + $header.Groups['name'].Value + ' AS ('
+            if ($header.Groups['tail'].Value) { $normalized += $header.Groups['tail'].Value }
+            $out.Add($normalized)
+            continue
+        }
+
+        $out.Add($line)
     }
 
     return ($out -join [Environment]::NewLine)
