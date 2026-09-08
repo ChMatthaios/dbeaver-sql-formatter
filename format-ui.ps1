@@ -2,12 +2,13 @@
     Windows UI formatter entry point.
 
     The desktop app first runs the same format-sql.ps1 engine used by DBeaver,
-    then applies the UI semantic presentation pass for complex expressions.
+    then applies UI-only semantic presentation passes for complex expressions.
 #>
 
 $ErrorActionPreference = 'Stop'
 $Formatter = Join-Path $PSScriptRoot 'format-sql.ps1'
 $SemanticPolish = Join-Path $PSScriptRoot 'format-semantic-polish.ps1'
+$UiFinalize = Join-Path $PSScriptRoot 'format-ui-finalize.ps1'
 
 $inputSql = [Console]::In.ReadToEnd()
 if ([string]::IsNullOrWhiteSpace($inputSql)) { exit 0 }
@@ -25,7 +26,7 @@ $formatted = $formatted.TrimEnd("`r", "`n")
 if (-not [string]::IsNullOrWhiteSpace($formatted)) {
     # The semantic pass recognizes function-call shaped lines. A CTE's `AS (`
     # has the same superficial shape, so protect that structural token while the
-    # pass works on the expressions inside the CTE and restore it afterwards.
+    # pass works on expressions inside the CTE and restore it afterwards.
     $cteAsToken = '__SQLFMT_CTE_AS_OPEN__'
     $polishInput = [regex]::Replace(
         $formatted,
@@ -38,6 +39,11 @@ if (-not [string]::IsNullOrWhiteSpace($formatted)) {
         Out-String
     $formatted = $formatted.TrimEnd("`r", "`n")
     $formatted = $formatted.Replace($cteAsToken, 'AS (')
+
+    $formatted = $formatted |
+        powershell -NoProfile -ExecutionPolicy Bypass -File $UiFinalize |
+        Out-String
+    $formatted = $formatted.TrimEnd("`r", "`n")
 }
 
 # Formatting must never silently change DB2 isolation semantics.
