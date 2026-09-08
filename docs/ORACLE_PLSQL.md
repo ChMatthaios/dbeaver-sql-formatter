@@ -3,10 +3,10 @@
 The same DBeaver external formatter command is used for DB2, PostgreSQL, T-SQL and Oracle:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Path\To\dbeaver-sql-formatter\format-sql.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Path\To\dbeaver-sql-formatter\formatter\format-dbeaver.ps1"
 ```
 
-`format-sql.ps1` automatically routes strong Oracle / PL-SQL syntax signals to `format-plsql.ps1`; ordinary ANSI SQL continues through the shared formatter.
+`formatter/format-dbeaver.ps1` delegates to the same full presentation pipeline used by the Windows UI. Dialect detection underneath automatically routes strong Oracle / PL-SQL syntax signals to `formatter/format-plsql.ps1`; ordinary ANSI SQL continues through the shared formatter.
 
 ## Covered in the first Oracle release
 
@@ -36,6 +36,6 @@ The formatter remains heuristic rather than a complete Oracle parser. When a con
 
 ## DBeaver
 
-No second formatter configuration is required. Configure DBeaver once to call `format-sql.ps1`; the same `Ctrl + Shift + F` command can then be used in DB2, PostgreSQL, SQL Server/Azure SQL and Oracle editors.
+No second formatter configuration is required. Configure DBeaver once to call `formatter/format-dbeaver.ps1`; the same `Ctrl + Shift + F` command can then be used in DB2, PostgreSQL, SQL Server/Azure SQL and Oracle editors.
 
 For procedures, functions, packages, triggers and anonymous blocks, select the complete program unit before formatting, including the final `/` when it is present in the script.
