@@ -13,6 +13,7 @@
 $ErrorActionPreference = 'Stop'
 $UnitFormatter = Join-Path $PSScriptRoot 'format-ui.ps1'
 $CaseBranchRepair = Join-Path $PSScriptRoot 'format-case-branches.ps1'
+$CaseConditionDetail = Join-Path $PSScriptRoot 'format-case-condition-detail.ps1'
 
 function Test-UnsafeToSplit {
     param([string]$Text)
@@ -133,6 +134,16 @@ function Format-OneUnit {
     if (Test-Path $CaseBranchRepair) {
         $formatted = $formatted |
             powershell -NoProfile -ExecutionPolicy Bypass -File $CaseBranchRepair |
+            Out-String
+        $formatted = $formatted.TrimEnd("`r", "`n")
+    }
+
+    # A WHEN condition is itself a structured expression. Refine inline EXISTS
+    # queries as independent SQL units and split top-level boolean predicates
+    # according to the user's selected boolean-operator style.
+    if (Test-Path $CaseConditionDetail) {
+        $formatted = $formatted |
+            powershell -NoProfile -ExecutionPolicy Bypass -File $CaseConditionDetail |
             Out-String
         $formatted = $formatted.TrimEnd("`r", "`n")
     }
